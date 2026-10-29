@@ -33,6 +33,15 @@ export const MODELS = Array.from(
   )
 );
 
+/**
+ * Models pinned per role. Pinning is a prerequisite for prompt caching and for
+ * reproducible evaluation; when unset, the free router keeps the old behavior.
+ */
+export const MODEL_ROLES = {
+  curriculum: process.env.OPENROUTER_MODEL_CURRICULUM || MODELS[0],
+  content: process.env.OPENROUTER_MODEL_CONTENT || MODELS[0],
+};
+
 /** Default per-request timeout. Keeps AI Studio / Cloud Run requests bounded. */
 export const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
@@ -120,6 +129,42 @@ REGRAS:
 export const PROMPT_ENHANCER_SYSTEM_PROMPT = AGENT_1_PROMPT_OPTIMIZER;
 export const TOPIC_DECOMPOSER_SYSTEM_PROMPT = AGENT_4_ROADMAP_SERIALIZER;
 
+/**
+ * Single-call curriculum agent. Replaces the old `list-topics` + `structure-roadmap`
+ * pair: the model emits the final compact TOON payload directly, so topics are
+ * never paid for twice and there is no second chance to drift from the theme.
+ */
+export const AGENT_CURRICULUM = `Você é um arquiteto curricular técnico.
+Decomponha o tema em EXATAMENTE 8 tópicos por nível (40 no total).
+
+Níveis (lv): 0 pré-requisitos, 1 iniciante, 2 intermediário, 3 avançado, 4 próximos passos.
+
+Retorne UM único bloco \`\`\`toon\`\`\` e nada fora dele:
+title: Título da trilha em português
+topics[40]{lv|t|d|s}:
+  0|Modelagem relacional|Tabelas chaves e normalização|sql modelagem
+  0|Álgebra relacional|Operações de conjunto sobre tabelas|sql teoria
+
+REGRAS:
+- Exatamente 40 linhas. Nunca use reticências nem omita linhas.
+- t: 4 a 60 caracteres, específico e único.
+- d: no máximo 12 palavras, telegráfico, sem "aprender", "introdução a" ou "conceitos de".
+- s: 2 termos de busca separados por espaço.
+- Nunca use "|" dentro de um campo.
+- Fique estritamente no tema. Não invente produtos, cursos ou tecnologias.
+- Sem saudações, sem explicações antes ou depois do bloco.`;
+
+export function buildCurriculumUserPrompt(topic: string, scope?: string): string {
+  const cleanTopic = topic.trim().slice(0, 200);
+  const cleanScope = (scope || "").trim().slice(0, 800);
+  const scopeLine =
+    cleanScope && cleanScope.toLowerCase() !== cleanTopic.toLowerCase()
+      ? `\nEscopo: ${cleanScope}`
+      : "";
+
+  return `Tema: "${cleanTopic}"${scopeLine}\n\nGere a grade com 40 tópicos (8 por nível), fiéis ao tema.`;
+}
+
 
 export const CONTENT_CURATOR_SYSTEM_PROMPT = `Tech educator. Explain topic in dense, informative Portuguese Markdown. No greetings, no preamble.
 Format:
@@ -183,14 +228,29 @@ export function stripThinking(text: string): string {
   return cleaned.trim();
 }
 
+export interface CallLLMOptions {
+  /** Send `reasoning: { enabled: true }`. Defaults to true (legacy behavior). */
+  reasoning?: boolean;
+  temperature?: number;
+  /** OpenRouter `response_format`, e.g. `{ type: "json_object" }`. */
+  responseFormat?: Record<string, unknown>;
+  /** Extra provider preferences, e.g. `{ require_parameters: true }`. */
+  provider?: Record<string, unknown>;
+}
+
 /**
- * Calls OpenRouter using the OpenAI SDK with reasoning enabled.
+ * Calls OpenRouter using the OpenAI SDK.
+ *
+ * `reasoning` is opt-in per call: reasoning tokens are billed as output, so
+ * structured/curriculum tasks run without it (which also removes the empty
+ * `content` responses that used to require a second request).
  */
 export async function callLLM(
   messages: any[],
   maxTokens = 2000,
   model = MODELS[0],
-  timeoutMs = DEFAULT_LLM_TIMEOUT_MS
+  timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
+  options: CallLLMOptions = {}
 ): Promise<ORChatCompletion> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -199,32 +259,54 @@ export async function callLLM(
     );
   }
 
-  try {
-    // Call with reasoning: { enabled: true } as required by OpenRouter.
-    // maxRetries: 0 keeps retry/fallback logic in withRetry().
-    const apiResponse = (await client.chat.completions.create({
+  const reasoningEnabled = options.reasoning !== false;
+
+  const buildRequest = (withReasoning: boolean) => {
+    const request: Record<string, unknown> = {
       model,
       messages,
       max_tokens: maxTokens,
-      reasoning: { enabled: true },
       timeout: timeoutMs,
       maxRetries: 0,
-    } as any)) as ORChatCompletion;
+    };
+
+    if (withReasoning) request.reasoning = { enabled: true };
+    if (typeof options.temperature === "number") request.temperature = options.temperature;
+    if (options.responseFormat) request.response_format = options.responseFormat;
+    if (options.provider) request.provider = options.provider;
+
+    return request;
+  };
+
+  try {
+    // maxRetries: 0 keeps retry/fallback logic in withRetry().
+    const apiResponse = (await client.chat.completions.create(
+      buildRequest(reasoningEnabled) as any
+    )) as ORChatCompletion;
 
     const firstMsg = apiResponse.choices?.[0]?.message;
+    if (process.env.LLM_USAGE_LOG === "1") {
+      const usage = apiResponse.usage as
+        | (typeof apiResponse.usage & {
+            prompt_tokens_details?: { cached_tokens?: number };
+          })
+        | undefined;
+      console.info(
+        `[llm] ${model} prompt=${usage?.prompt_tokens ?? "?"} completion=${
+          usage?.completion_tokens ?? "?"
+        } cached=${usage?.prompt_tokens_details?.cached_tokens ?? 0}`
+      );
+    }
+
     if (!firstMsg?.content || firstMsg.content.trim() === "") {
       const reasoningText = (firstMsg as any)?.reasoning || "";
       if (reasoningText && (reasoningText.includes("{") || reasoningText.length > 50)) {
         firstMsg.content = stripThinking(reasoningText);
-      } else {
+      } else if (reasoningEnabled) {
         // Fallback retry without reasoning parameter to get direct content
-        const directResponse = (await client.chat.completions.create({
-          model,
-          messages,
-          max_tokens: maxTokens,
-          timeout: timeoutMs,
-          maxRetries: 0,
-        } as any)) as ORChatCompletion;
+        const directResponse = (await client.chat.completions.create(
+          buildRequest(false) as any
+        )) as ORChatCompletion;
         if (directResponse.choices?.[0]?.message) {
           directResponse.choices[0].message.content = stripThinking(
             directResponse.choices[0].message.content || ""
@@ -241,14 +323,10 @@ export async function callLLM(
     const errorMsg = error?.message || String(error);
 
     // If the selected model does not support the reasoning parameter, retry without it
-    if (errorMsg.toLowerCase().includes("reasoning")) {
-      const fallbackResponse = (await client.chat.completions.create({
-        model,
-        messages,
-        max_tokens: maxTokens,
-        timeout: timeoutMs,
-        maxRetries: 0,
-      } as any)) as ORChatCompletion;
+    if (reasoningEnabled && errorMsg.toLowerCase().includes("reasoning")) {
+      const fallbackResponse = (await client.chat.completions.create(
+        buildRequest(false) as any
+      )) as ORChatCompletion;
       return fallbackResponse;
     }
 
@@ -351,13 +429,15 @@ function friendlyError(message: string, isLastAttempt: boolean): Error {
 export async function withRetry<T>(
   fn: (model: string) => Promise<T>,
   retries = 2,
-  initialDelay = 1500
+  initialDelay = 1500,
+  models: string[] = MODELS
 ): Promise<T> {
+  const rotation = models.length > 0 ? models : MODELS;
   let delay = initialDelay;
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const model = MODELS[attempt % MODELS.length];
+    const model = rotation[attempt % rotation.length];
     try {
       return await fn(model);
     } catch (error: any) {

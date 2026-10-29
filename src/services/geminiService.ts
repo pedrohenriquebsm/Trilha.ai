@@ -100,7 +100,16 @@ export async function enhancePrompt(input: string): Promise<string> {
   }
 }
 
-// Agent 2: Arquiteto Curricular (Gera lista de tópicos e descrições nos 5 níveis)
+// Agent 2 (v2): Currículo completo em uma única chamada (TOON tabular)
+export async function generateCurriculum(topic: string, scope: string): Promise<TopicTree> {
+  const data = await apiPost<{ topicTree: TopicTree }>("/api/gemini/curriculum", {
+    topic,
+    scope,
+  });
+  return data.topicTree;
+}
+
+// Agent 2 (legado): Arquiteto Curricular (Gera lista de tópicos e descrições nos 5 níveis)
 export async function listTopics(topic: string, enhancedPrompt: string): Promise<string> {
   const data = await apiPost<{ topicListText: string }>("/api/gemini/list-topics", {
     topic,

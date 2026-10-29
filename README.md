@@ -72,14 +72,30 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
 ## Como a geração funciona
 
-A criação de uma trilha usa quatro chamadas de IA em sequência:
+A criação de uma trilha usa **uma** chamada de IA:
 
-1. **Agente 1 — Prompt Enhancer**: refina o escopo do tema.
-2. **Agente 2 — Curriculum Architect**: propõe tópicos e descrições nos 5 níveis.
-3. **Agente 3 — References Curator**: sugere documentações/livros canônicos.
-4. **Agente 4 — Roadmap Serializer**: devolve o JSON compacto (TOON) validado pelo parser.
+1. **Agente Curricular**: recebe o tema (e o escopo enriquecido quando o tema é
+   curto) e devolve 40 tópicos — 8 por nível — em TOON tabular
+   (`topics[40]{lv|t|d|s}:`). O parser (`src/lib/curriculumParser.ts`) valida,
+   deduplica e rejeita níveis com menos de 4 tópicos.
+
+O tema só passa pelo **Prompt Enhancer** quando tem menos de 3 palavras. A
+curadoria de conteúdo do primeiro tópico é **lazy**: o texto é gerado quando o
+usuário abre o tópico, pelo botão **Gerar Conteúdo com IA**.
+
+`NEXT_PUBLIC_CURRICULUM_V2="0"` restaura o pipeline antigo de quatro agentes
+(`enhance-prompt` → `list-topics` → `curate-references` → `structure-roadmap`),
+que continua disponível nas rotas por um release.
 
 O primeiro tópico é pré-curado para onboarding; os demais podem ser expandidos sob demanda na página da trilha. Em **Research Mode**, a trilha nasce apenas com fontes; o botão **Gerar Conteúdo com IA** força a geração do texto explicativo.
+
+### Fontes (cite-or-drop)
+
+Referências sugeridas pela IA só entram se o domínio estiver na allowlist de
+`src/lib/sourcePolicy.ts` **e** a URL responder com sucesso (`HEAD`, com fallback
+para `GET`). O restante é descartado e preenchido pelo catálogo curado de
+`src/lib/sourceHelper.ts` — nunca por uma referência inventada.
+`STRICT_SOURCES="0"` desliga a política.
 
 ### Níveis
 
@@ -105,6 +121,7 @@ O primeiro tópico é pré-curado para onboarding; os demais podem ser expandido
 
 | Rota | Função |
 | --- | --- |
+| `POST /api/gemini/curriculum` | Agente 2 (v2) — 40 tópicos em uma chamada TOON |
 | `POST /api/gemini/enhance-prompt` | Agente 1 — refinamento de escopo |
 | `POST /api/gemini/list-topics` | Agente 2 — grade curricular |
 | `POST /api/gemini/curate-references` | Agente 3 — referências canônicas |
