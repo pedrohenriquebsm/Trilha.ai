@@ -38,24 +38,25 @@ export async function deleteRoadmap(
     // 3. Limpar registros de progresso vinculados a esta trilha pertencentes ao usuário
     try {
       const progressRef = collection(db, 'userProgress');
-      const qProgress = query(
-        progressRef, 
-        where('roadmapId', '==', roadmapId),
-        where('userId', '==', currentUserId)
-      );
+      // Query only by userId: it matches the Firestore Rules read condition and
+      // avoids requiring a composite index. roadmapId is filtered client-side.
+      const qProgress = query(progressRef, where('userId', '==', currentUserId));
       const progressSnap = await getDocs(qProgress);
-      if (!progressSnap.empty) {
+      const staleProgress = progressSnap.docs.filter(
+        (progDoc) => progDoc.data().roadmapId === roadmapId
+      );
+      if (staleProgress.length > 0) {
         const progBatch = writeBatch(db);
-        progressSnap.docs.forEach((progDoc) => {
+        staleProgress.forEach((progDoc) => {
           progBatch.delete(progDoc.ref);
         });
         await progBatch.commit();
       }
     } catch (cleanupErr) {
-      console.warn('Aviso: Limpeza de progresso concluída com observação:', cleanupErr);
+      console.warn('Aviso: limpeza de progresso concluída com observação:', cleanupErr);
     }
   } catch (error) {
     console.error('Erro ao excluir roadmap:', error);
-    handleFirestoreError(error, OperationType.DELETE, `roadmaps/${roadmapId}`);
+    throw handleFirestoreError(error, OperationType.DELETE, `roadmaps/${roadmapId}`);
   }
 }

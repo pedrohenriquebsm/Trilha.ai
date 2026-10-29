@@ -38,7 +38,7 @@ interface TechnologyReference {
 
 const TECH_CATALOG: TechnologyReference[] = [
   {
-    keywords: ["react", "jsx", "hook", "hooks", "next", "state", "props", "frontend"],
+    keywords: ["react", "jsx", "hook", "hooks", "next.js", "nextjs", "state", "props", "frontend"],
     guide: {
       title: "Documentação Oficial do React (React.dev) - Guia Completo e Prático",
       url: "https://react.dev/learn",
@@ -108,7 +108,7 @@ const TECH_CATALOG: TechnologyReference[] = [
     },
   },
   {
-    keywords: ["python", "django", "flask", "fastapi", "pandas", "data", "scikit"],
+    keywords: ["python", "django", "flask", "fastapi", "pytest", "pip"],
     guide: {
       title: "Documentação Oficial do Python em Português",
       url: "https://docs.python.org/pt-br/3/tutorial/index.html",
@@ -320,6 +320,441 @@ const TECH_CATALOG: TechnologyReference[] = [
       searchQuery: "livro arquitetura limpa robert c martin uncle bob pdf",
     },
   },
+  {
+    keywords: ["rust", "cargo", "borrow checker", "ownership", "tokio", "rustlang"],
+    guide: {
+      title: "The Rust Programming Language — Livro Oficial",
+      url: "https://doc.rust-lang.org/book/",
+      publisher: "Rust Project",
+      author: "Steve Klabnik & Carol Nichols",
+      description: "Guia oficial de ownership, borrowing, lifetimes, traits, concorrência e testes em Rust.",
+      searchQuery: "the rust programming language book oficial português",
+    },
+    article: {
+      title: "Rust by Example — Exemplos Executáveis",
+      url: "https://doc.rust-lang.org/rust-by-example/",
+      publisher: "Rust Project",
+      author: "Rust Community",
+      description: "Coleção de exemplos executáveis cobrindo desde sintaxe básica até macros e async.",
+      searchQuery: "rust by example exemplos executaveis",
+    },
+    video: {
+      title: "Canal Oficial da Rust Foundation",
+      url: "https://www.youtube.com/@rustfoundation",
+      publisher: "Rust Foundation / YouTube",
+      author: "Rust Foundation",
+      description: "Palestras, updates da linguagem e conteúdo oficial sobre o ecossistema Rust.",
+      searchQuery: "rust foundation youtube palestras rust",
+    },
+  },
+  {
+    keywords: ["java", "spring boot", "spring", "jvm", "maven", "gradle"],
+    guide: {
+      title: "Documentação Oficial da Plataforma Java",
+      url: "https://docs.oracle.com/en/java/",
+      publisher: "Oracle",
+      author: "Oracle Java Team",
+      description: "Documentação oficial da linguagem, JVM, bibliotecas padrão e guias de migração.",
+      searchQuery: "documentacao oficial java oracle jvm",
+    },
+    article: {
+      title: "Baeldung — Tutoriais de Java e Spring",
+      url: "https://www.baeldung.com/",
+      publisher: "Baeldung",
+      author: "Baeldung Team",
+      description: "Tutoriais práticos de Java, Spring Boot, JPA, testes e arquitetura de aplicações.",
+      searchQuery: "baeldung java spring boot tutoriais",
+    },
+    video: {
+      title: "Loiane Groner — Java e Spring na Prática",
+      url: "https://www.youtube.com/@loiane",
+      publisher: "Loiane Groner / YouTube",
+      author: "Loiane Groner",
+      description: "Aulas em português sobre Java, Spring Boot, Angular e boas práticas de backend.",
+      searchQuery: "loiane java spring boot curso youtube",
+    },
+    book: {
+      title: "Effective Java (3rd Edition)",
+      url: "https://www.oreilly.com/library/view/effective-java-3rd/9780134686097/",
+      publisher: "Addison-Wesley",
+      author: "Joshua Bloch",
+      description: "Referência canônica de boas práticas, imutabilidade e design de APIs em Java.",
+      searchQuery: "effective java joshua bloch livro",
+    },
+  },
+  {
+    keywords: ["c#", "csharp", ".net", "dotnet", "asp.net", "entity framework"],
+    guide: {
+      title: "Documentação Oficial de C# e .NET",
+      url: "https://learn.microsoft.com/en-us/dotnet/csharp/",
+      publisher: "Microsoft Learn",
+      author: "Microsoft .NET Team",
+      description: "Guia oficial da linguagem C#, LINQ, async/await, ASP.NET Core e Entity Framework.",
+      searchQuery: "documentacao oficial csharp dotnet microsoft learn",
+    },
+    article: {
+      title: "Tour of C# — Guia Guiado da Linguagem",
+      url: "https://learn.microsoft.com/en-us/dotnet/csharp/tour-of-csharp/",
+      publisher: "Microsoft Learn",
+      author: "Microsoft .NET Team",
+      description: "Visão geral progressiva dos recursos da linguagem com exemplos comentados.",
+      searchQuery: "tour of csharp microsoft learn",
+    },
+    video: {
+      title: "Canal Oficial .NET",
+      url: "https://www.youtube.com/@dotnet",
+      publisher: ".NET / YouTube",
+      author: "Microsoft .NET Team",
+      description: "Vídeos oficiais sobre C#, ASP.NET Core, Blazor e novidades da plataforma .NET.",
+      searchQuery: "dotnet youtube csharp aspnet core",
+    },
+    book: {
+      title: "C# in Depth (4th Edition)",
+      url: "https://www.manning.com/books/c-sharp-in-depth-fourth-edition",
+      publisher: "Manning",
+      author: "Jon Skeet",
+      description: "Aprofundamento técnico em generics, LINQ, async e evolução da linguagem C#.",
+      searchQuery: "c sharp in depth jon skeet livro",
+    },
+  },
+  {
+    keywords: ["golang", "goroutine", "gorm", "gin framework", "go language"],
+    guide: {
+      title: "Documentação Oficial da Linguagem Go",
+      url: "https://go.dev/doc/",
+      publisher: "Go Project",
+      author: "Go Team",
+      description: "Documentação oficial com guias de módulos, concorrência, testes e publicação.",
+      searchQuery: "documentacao oficial golang go.dev",
+    },
+    article: {
+      title: "Go by Example — Exemplos Práticos",
+      url: "https://gobyexample.com/",
+      publisher: "Go by Example",
+      author: "Mark McGranaghan",
+      description: "Exemplos comentados de goroutines, channels, interfaces e biblioteca padrão.",
+      searchQuery: "go by example goroutines channels",
+    },
+    video: {
+      title: "Cursos de Go no freeCodeCamp",
+      url: "https://www.youtube.com/@freecodecamp",
+      publisher: "freeCodeCamp / YouTube",
+      author: "freeCodeCamp",
+      description: "Cursos completos de Go e desenvolvimento backend disponíveis no canal.",
+      searchQuery: "freecodecamp golang curso youtube",
+    },
+    book: {
+      title: "The Go Programming Language",
+      url: "https://www.gopl.io/",
+      publisher: "Addison-Wesley",
+      author: "Alan A. A. Donovan & Brian W. Kernighan",
+      description: "Livro de referência sobre a linguagem Go, concorrência e engenharia de software.",
+      searchQuery: "the go programming language livro gopl",
+    },
+  },
+  {
+    keywords: ["c++", "cpp", "linguagem c", "ponteiros", "stl", "c/c++"],
+    guide: {
+      title: "cppreference — Referência Completa de C e C++",
+      url: "https://en.cppreference.com/w/",
+      publisher: "cppreference.com",
+      author: "Comunidade C++",
+      description: "Referência técnica de tipos, STL, memória, templates e concorrência em C/C++.",
+      searchQuery: "cppreference c++ reference stl",
+    },
+    article: {
+      title: "ISO C++ FAQ — Perguntas Frequentes Oficiais",
+      url: "https://isocpp.org/faq",
+      publisher: "isocpp.org",
+      author: "ISO C++ Committee",
+      description: "Respostas canônicas sobre ponteiros, RAII, templates e boas práticas modernas.",
+      searchQuery: "isocpp faq c++ moderno",
+    },
+    video: {
+      title: "CppCon — Palestras Técnicas de C++",
+      url: "https://www.youtube.com/@cppcon",
+      publisher: "CppCon / YouTube",
+      author: "CppCon",
+      description: "Palestras avançadas sobre performance, templates, memória e evolução do C++.",
+      searchQuery: "cppcon youtube c++ talks",
+    },
+    book: {
+      title: "The C++ Programming Language (4th Edition)",
+      url: "https://www.stroustrup.com/4th.html",
+      publisher: "Addison-Wesley",
+      author: "Bjarne Stroustrup",
+      description: "Obra de referência do criador da linguagem, cobrindo C++ moderno e STL.",
+      searchQuery: "the c++ programming language stroustrup livro",
+    },
+  },
+  {
+    keywords: ["php", "laravel", "composer", "symfony"],
+    guide: {
+      title: "Manual Oficial do PHP em Português",
+      url: "https://www.php.net/manual/pt_BR/",
+      publisher: "PHP Group",
+      author: "PHP Documentation Team",
+      description: "Manual oficial da linguagem, funções, PDO, sessões e boas práticas de segurança.",
+      searchQuery: "manual oficial php portugues",
+    },
+    article: {
+      title: "PHP: The Right Way",
+      url: "https://phptherightway.com/",
+      publisher: "PHP: The Right Way",
+      author: "Comunidade PHP",
+      description: "Guia de práticas modernas, PSRs, Composer, testes e segurança em PHP.",
+      searchQuery: "php the right way boas praticas",
+    },
+    video: {
+      title: "Laravel — Canal Oficial",
+      url: "https://www.youtube.com/@LaravelPHP",
+      publisher: "Laravel / YouTube",
+      author: "Laravel Team",
+      description: "Conteúdo oficial sobre Laravel, Eloquent, filas e deploy de aplicações PHP.",
+      searchQuery: "laravel youtube oficial php",
+    },
+  },
+  {
+    keywords: ["ruby", "rails", "rubyonrails", "ruby on rails"],
+    guide: {
+      title: "Documentação Oficial do Ruby",
+      url: "https://www.ruby-lang.org/pt/documentation/",
+      publisher: "Ruby Community",
+      author: "Ruby Core Team",
+      description: "Documentação oficial da linguagem, biblioteca padrão e guias de instalação.",
+      searchQuery: "documentacao oficial ruby portugues",
+    },
+    article: {
+      title: "RubyGuides — Tutoriais de Ruby e Rails",
+      url: "https://www.rubyguides.com/",
+      publisher: "RubyGuides",
+      author: "Jesus Castello",
+      description: "Tutoriais práticos de Ruby, objetos, blocos, testes e Ruby on Rails.",
+      searchQuery: "rubyguides tutoriais ruby rails",
+    },
+    video: {
+      title: "Cursos de Ruby no freeCodeCamp",
+      url: "https://www.youtube.com/@freecodecamp",
+      publisher: "freeCodeCamp / YouTube",
+      author: "freeCodeCamp",
+      description: "Cursos completos de Ruby e Ruby on Rails disponíveis no canal.",
+      searchQuery: "freecodecamp ruby rails curso youtube",
+    },
+    book: {
+      title: "Why's (Poignant) Guide to Ruby",
+      url: "https://poignant.guide/",
+      publisher: "Poignant Guide",
+      author: "why the lucky stiff",
+      description: "Livro gratuito e clássico para aprender Ruby de forma leve e conceitual.",
+      searchQuery: "poignant guide to ruby livro",
+    },
+  },
+  {
+    keywords: [
+      "machine learning",
+      "aprendizado de máquina",
+      "aprendizado de maquina",
+      "data science",
+      "ciência de dados",
+      "ciencia de dados",
+      "deep learning",
+      "inteligência artificial",
+      "inteligencia artificial",
+      "pytorch",
+      "tensorflow",
+      "scikit-learn",
+      "pandas",
+      "numpy",
+      "rede neural",
+      "llm",
+    ],
+    guide: {
+      title: "scikit-learn — User Guide",
+      url: "https://scikit-learn.org/stable/user_guide.html",
+      publisher: "scikit-learn",
+      author: "scikit-learn Developers",
+      description: "Guia completo de pré-processamento, modelos, validação cruzada e métricas.",
+      searchQuery: "scikit learn user guide machine learning",
+    },
+    article: {
+      title: "Kaggle Learn — Trilhas de Data Science",
+      url: "https://www.kaggle.com/learn",
+      publisher: "Kaggle",
+      author: "Kaggle Team",
+      description: "Micro-cursos práticos de Python, pandas, machine learning e feature engineering.",
+      searchQuery: "kaggle learn data science cursos",
+    },
+    video: {
+      title: "Cursos de Machine Learning no freeCodeCamp",
+      url: "https://www.youtube.com/@freecodecamp",
+      publisher: "freeCodeCamp / YouTube",
+      author: "freeCodeCamp",
+      description: "Cursos completos de machine learning, deep learning e ciência de dados.",
+      searchQuery: "freecodecamp machine learning curso youtube",
+    },
+    book: {
+      title: "Hands-On Machine Learning with Scikit-Learn, Keras & TensorFlow",
+      url: "https://www.oreilly.com/library/view/hands-on-machine-learning/9781492032632/",
+      publisher: "O'Reilly Media",
+      author: "Aurélien Géron",
+      description: "Referência prática de ML, redes neurais e deploy de modelos em produção.",
+      searchQuery: "hands on machine learning aurelien geron livro",
+    },
+  },
+  {
+    keywords: [
+      "segurança",
+      "seguranca",
+      "security",
+      "owasp",
+      "pentest",
+      "criptografia",
+      "vulnerabilidade",
+      "ethical hacking",
+    ],
+    guide: {
+      title: "OWASP Top 10 — Riscos de Segurança em Aplicações",
+      url: "https://owasp.org/www-project-top-ten/",
+      publisher: "OWASP Foundation",
+      author: "OWASP Community",
+      description: "Os dez riscos mais críticos em aplicações web e como mitigá-los.",
+      searchQuery: "owasp top 10 seguranca aplicacoes web",
+    },
+    article: {
+      title: "PortSwigger Web Security Academy",
+      url: "https://portswigger.net/web-security",
+      publisher: "PortSwigger",
+      author: "PortSwigger Team",
+      description: "Laboratórios gratuitos de SQL injection, XSS, CSRF, autenticação e controle de acesso.",
+      searchQuery: "portswigger web security academy labs",
+    },
+    video: {
+      title: "LiveOverflow — Segurança Ofensiva na Prática",
+      url: "https://www.youtube.com/@LiveOverflow",
+      publisher: "LiveOverflow / YouTube",
+      author: "LiveOverflow",
+      description: "Análises técnicas de vulnerabilidades, CTFs, exploração e engenharia reversa.",
+      searchQuery: "liveoverflow seguranca ofensiva youtube",
+    },
+    book: {
+      title: "The Web Application Hacker's Handbook",
+      url: "https://www.oreilly.com/library/view/web-application-hackers/9781118026472/",
+      publisher: "Wiley",
+      author: "Dafydd Stuttard & Marcus Pinto",
+      description: "Referência clássica de testes de invasão e ataques a aplicações web.",
+      searchQuery: "web application hackers handbook livro",
+    },
+  },
+  {
+    keywords: [
+      "testes automatizados",
+      "teste unitário",
+      "teste unitario",
+      "testing",
+      "jest",
+      "vitest",
+      "cypress",
+      "tdd",
+      "quality assurance",
+    ],
+    guide: {
+      title: "Testing Library — Documentação Oficial",
+      url: "https://testing-library.com/docs/",
+      publisher: "Testing Library",
+      author: "Testing Library Team",
+      description: "Guias de testes focados no comportamento do usuário para React, DOM e Node.",
+      searchQuery: "testing library docs react testes",
+    },
+    article: {
+      title: "The Practical Test Pyramid — Martin Fowler",
+      url: "https://martinfowler.com/articles/practical-test-pyramid.html",
+      publisher: "martinfowler.com",
+      author: "Ham Vocke",
+      description: "Artigo de referência sobre unitários, integração e testes end-to-end.",
+      searchQuery: "practical test pyramid martin fowler",
+    },
+    video: {
+      title: "Cursos de Testes no freeCodeCamp",
+      url: "https://www.youtube.com/@freecodecamp",
+      publisher: "freeCodeCamp / YouTube",
+      author: "freeCodeCamp",
+      description: "Cursos de Jest, Cypress, TDD e automação de testes disponíveis no canal.",
+      searchQuery: "freecodecamp testes jest cypress curso",
+    },
+    book: {
+      title: "Unit Testing Principles, Practices, and Patterns",
+      url: "https://www.oreilly.com/library/view/unit-testing-principles/9780131495050/",
+      publisher: "Manning",
+      author: "Vladimir Khorikov",
+      description: "Como escrever testes sustentáveis, significativos e alinhados ao domínio.",
+      searchQuery: "unit testing principles practices patterns livro",
+    },
+  },
+  {
+    keywords: [
+      "aws",
+      "azure",
+      "gcp",
+      "google cloud",
+      "cloud computing",
+      "computação em nuvem",
+      "computacao em nuvem",
+      "terraform",
+      "serverless",
+      "lambda",
+    ],
+    guide: {
+      title: "Google Cloud — Documentação Oficial",
+      url: "https://cloud.google.com/docs",
+      publisher: "Google Cloud",
+      author: "Google Cloud Team",
+      description: "Guias de Compute Engine, Cloud Run, GKE, BigQuery, IAM e faturamento.",
+      searchQuery: "google cloud documentacao oficial cloud run gke",
+    },
+    article: {
+      title: "AWS — O que é Computação em Nuvem?",
+      url: "https://aws.amazon.com/what-is-cloud-computing/",
+      publisher: "Amazon Web Services",
+      author: "AWS Team",
+      description: "Conceitos de IaaS, PaaS, serverless, elasticidade e modelos de responsabilidade.",
+      searchQuery: "aws o que e computacao em nuvem",
+    },
+    video: {
+      title: "Google Cloud Tech — Canal Oficial",
+      url: "https://www.youtube.com/@GoogleCloudTech",
+      publisher: "Google Cloud / YouTube",
+      author: "Google Cloud Team",
+      description: "Tutoriais oficiais de Cloud Run, Kubernetes, BigQuery e arquitetura na GCP.",
+      searchQuery: "google cloud tech youtube tutoriais",
+    },
+  },
+  {
+    keywords: ["linux", "bash", "shell script", "terminal", "ubuntu", "debian"],
+    guide: {
+      title: "The Linux Documentation Project",
+      url: "https://tldp.org/",
+      publisher: "TLDP",
+      author: "Linux Documentation Project",
+      description: "Guias clássicos de shell, administração de sistemas e comandos Linux.",
+      searchQuery: "the linux documentation project guias shell",
+    },
+    article: {
+      title: "Linux Foundation — Recursos e Guias",
+      url: "https://www.linuxfoundation.org/",
+      publisher: "Linux Foundation",
+      author: "Linux Foundation",
+      description: "Materiais sobre kernel, administração, containers e certificações Linux.",
+      searchQuery: "linux foundation recursos guias",
+    },
+    video: {
+      title: "Learn Linux TV — Tutoriais Práticos",
+      url: "https://www.youtube.com/@LearnLinuxTV",
+      publisher: "Learn Linux TV / YouTube",
+      author: "Jay LaCroix",
+      description: "Tutoriais de terminal, shell scripting, servidores e administração Linux.",
+      searchQuery: "learn linux tv youtube terminal shell",
+    },
+  },
 ];
 
 /**
@@ -352,6 +787,42 @@ export function sanitizeSourceUrl(url: string, topicTitle: string): string {
 }
 
 /**
+ * Word-boundary matching avoids false positives such as "data" matching
+ * "database" or "js" matching "nextjs". Keywords with symbols (c++, c#, .net,
+ * ci/cd) fall back to a plain substring match.
+ */
+function matchesKeyword(text: string, keyword: string): boolean {
+  const normalizedKeyword = keyword.toLowerCase().trim();
+  if (!normalizedKeyword) return false;
+
+  if (/[^a-z0-9\s]/.test(normalizedKeyword)) {
+    return text.includes(normalizedKeyword);
+  }
+
+  const escaped = normalizedKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(text);
+}
+
+function findBestCatalogEntry(normalizedText: string): TechnologyReference | undefined {
+  let best: TechnologyReference | undefined;
+  let bestScore = 0;
+
+  for (const entry of TECH_CATALOG) {
+    const score = entry.keywords.reduce(
+      (total, keyword) => (matchesKeyword(normalizedText, keyword) ? total + keyword.length : total),
+      0
+    );
+
+    if (score > bestScore) {
+      best = entry;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+/**
  * Generates verified, real-world educational resources (articles, documentation, videos, books)
  * without using search query URLs.
  */
@@ -369,12 +840,15 @@ export function getOptimizedTopicSources(
     .join(" ")
     .toLowerCase();
 
+  // Prefer the topic's own words. Using the roadmap title first would give
+  // every topic in a React roadmap the React docs, even a "CSS Grid" topic.
+  const topicText = [topicTitle, contextDescription || ""].join(" ").toLowerCase();
+
   const year = new Date().getFullYear().toString();
 
-  // Find the matching technology in our catalog
-  const matched = TECH_CATALOG.find((item) =>
-    item.keywords.some((keyword) => normalizedText.includes(keyword))
-  );
+  // Find the most specific technology in our catalog
+  const matched =
+    findBestCatalogEntry(topicText) || findBestCatalogEntry(normalizedText);
 
   if (matched) {
     const list: Source[] = [
@@ -426,47 +900,48 @@ export function getOptimizedTopicSources(
     return list;
   }
 
-  // Fallback for general tech topics: real high-authority tech portals with deep query info
+  // Fallback for topics outside the curated catalog. These are real, general
+  // developer portals — no fake topic-specific links and no search URLs.
   return [
     {
       type: "guide",
-      title: `Documentação e Referência Técnica: ${topicTitle}`,
-      url: "https://developer.mozilla.org/pt-BR/",
-      publisher: "MDN Web Docs",
-      author: "MDN / W3C",
+      title: "roadmap.sh — Guias de Estudo por Tecnologia",
+      url: "https://roadmap.sh/",
+      publisher: "roadmap.sh",
+      author: "Comunidade roadmap.sh",
       year,
-      description: `Guia de conceitos, padrões abertos e especificações formais relacionados a ${topicTitle}.`,
-      searchQuery: `documentação oficial tutorial ${topicTitle} guia desenvolvedor`,
+      description: `Roadmaps da comunidade para organizar o estudo de ${topicTitle} e tecnologias relacionadas.`,
+      searchQuery: `roadmap ${topicTitle} guia de estudos`,
     },
     {
       type: "article",
-      title: `Artigo Técnico e Práticas de Mercado: ${topicTitle}`,
+      title: "freeCodeCamp — Artigos e Tutoriais em Português",
       url: "https://www.freecodecamp.org/portuguese/news/",
       publisher: "freeCodeCamp Brasil",
-      author: "Comunidade Técnica",
+      author: "Comunidade freeCodeCamp",
       year,
-      description: `Artigo detalhado com casos práticos e resolução de problemas comuns em ${topicTitle}.`,
-      searchQuery: `artigo estudo aprofundado ${topicTitle} freecodecamp portugues`,
+      description: `Artigos técnicos e tutoriais práticos; use a busca do portal para encontrar conteúdo sobre ${topicTitle}.`,
+      searchQuery: `freecodecamp portugues ${topicTitle} tutorial`,
     },
     {
       type: "video",
-      title: `Vídeo Tutorial e Aulas Práticas: ${topicTitle}`,
-      url: "https://www.youtube.com/@CursoemVideo",
-      publisher: "Curso em Vídeo / YouTube",
-      author: "Gustavo Guanabara",
+      title: "freeCodeCamp — Cursos em Vídeo",
+      url: "https://www.youtube.com/@freecodecamp",
+      publisher: "freeCodeCamp / YouTube",
+      author: "freeCodeCamp",
       year,
-      description: `Aulas em vídeo com didática passo a passo e resolução de exercícios sobre ${topicTitle}.`,
-      searchQuery: `curso tutorial completo ${topicTitle} em portugues aula`,
+      description: `Cursos completos e gratuitos de programação; procure por ${topicTitle} no canal.`,
+      searchQuery: `freecodecamp ${topicTitle} curso completo`,
     },
     {
       type: "book",
-      title: `Livro e Teoria de Engenharia: ${topicTitle}`,
-      url: "https://refactoring.guru/pt-br/design-patterns",
-      publisher: "Refactoring Guru / O'Reilly",
-      author: "Engenharia de Software",
+      title: "O'Reilly — Catálogo Técnico",
+      url: "https://www.oreilly.com/",
+      publisher: "O'Reilly Media",
+      author: "O'Reilly Media",
       year,
-      description: `Material de aprofundamento conceitual e padrões aplicados para ${topicTitle}.`,
-      searchQuery: `livro engenharia de software arquitetura ${topicTitle}`,
+      description: `Catálogo de livros técnicos para aprofundamento em ${topicTitle}.`,
+      searchQuery: `oreilly ${topicTitle} livro`,
     },
   ];
 }

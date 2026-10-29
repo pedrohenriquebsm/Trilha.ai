@@ -8,8 +8,9 @@ import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateChallenge, generateTopicContentAndSources, curateContent } from '../services/geminiService';
-import { db, updateDoc, doc, handleFirestoreError, OperationType, FirebaseUser, collection, addDoc, deleteDoc, writeBatch } from '../lib/firebase';
+import { db, updateDoc, doc, handleFirestoreError, OperationType, FirebaseUser, collection, addDoc, deleteDoc, writeBatch, serverTimestamp, query, where, getDocs, auth, googleProvider, signInWithPopup } from '../lib/firebase';
 import { deleteRoadmap } from '../lib/roadmapService';
+import { isSafeHttpUrl } from '../lib/urlVerifier';
 import {
   DndContext,
   closestCenter,
@@ -81,9 +82,19 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
 
   const router = useRouter();
   const isAuthor = user?.uid === roadmap.authorId;
+
+  // Se o usuário sair (ou trocar de conta), fecha os controles de edição que
+  // exigem autoria. Sem isso, os botões continuariam visíveis até um reload.
+  React.useEffect(() => {
+    if (!isAuthor) {
+      setIsEditMode(false);
+      setAddingTopicToLevel(null);
+    }
+  }, [isAuthor]);
 
   const handleDeleteRoadmap = async () => {
     if (!user || !isAuthor) return;
@@ -111,8 +122,12 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
       const topicRef = doc(db, `roadmaps/${roadmap.id}/topics`, topicId);
       await updateDoc(topicRef, updates);
     } catch (error) {
-      console.error("Error updating topic:", error);
-      handleFirestoreError(error, OperationType.UPDATE, `roadmaps/${roadmap.id}/topics/${topicId}`);
+      console.error('Error updating topic:', error);
+      throw handleFirestoreError(
+        error,
+        OperationType.UPDATE,
+        `roadmaps/${roadmap.id}/topics/${topicId}`
+      );
     }
   };
 
@@ -124,8 +139,10 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
       const oldIndex = levelTopics.findIndex((t) => t.id === active.id);
       const newIndex = levelTopics.findIndex((t) => t.id === over.id);
 
+      if (oldIndex === -1 || newIndex === -1) return;
+
       const newOrderedTopics = arrayMove(levelTopics, oldIndex, newIndex);
-      
+
       try {
         const batch = writeBatch(db);
         newOrderedTopics.forEach((topic, index) => {
@@ -134,108 +151,209 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
         });
         await batch.commit();
       } catch (error) {
-        console.error("Error reordering topics:", error);
-        handleFirestoreError(error, OperationType.UPDATE, `roadmaps/${roadmap.id}/topics`);
+        console.error('Error reordering topics:', error);
+        setActionError(
+          handleFirestoreError(error, OperationType.UPDATE, `roadmaps/${roadmap.id}/topics`)
+            .message
+        );
       }
     }
   };
 
   const handleCreateTopic = async (level: number) => {
-    if (!newTopicData.title) return;
-    if (!newTopicData.content && !newTopicData.description) return;
+    const title = newTopicData.title.trim().slice(0, 200);
+    const description = newTopicData.description.trim().slice(0, 500);
+    const manualContent = newTopicData.content.trim().slice(0, 20000);
+
+    if (!title) return;
+    if (!manualContent && !description) return;
+    if (!user) {
+      setActionError('Entre na sua conta para adicionar tópicos.');
+      return;
+    }
+    if (!isAuthor) {
+      setActionError('Apenas o autor da trilha pode adicionar tópicos.');
+      return;
+    }
 
     setIsAddingTopic(true);
+    setActionError(null);
     try {
-      const shouldGenerateContent = !newTopicData.content;
+      const shouldGenerateContent = !manualContent;
       const { content, sources } = await generateTopicContentAndSources(
-        newTopicData.title,
-        newTopicData.description,
+        title,
+        description,
         { title: roadmap.title, originalTopic: roadmap.originalTopic },
         shouldGenerateContent
       );
 
       const levelTopics = topicsByLevel[level] || [];
-      const nextOrder = levelTopics.length > 0 ? Math.max(...levelTopics.map(t => t.order)) + 1 : 1;
+      const nextOrder =
+        levelTopics.length > 0 ? Math.max(...levelTopics.map((t) => t.order)) + 1 : 1;
 
       const topicData = {
         roadmapId: roadmap.id,
-        title: newTopicData.title,
-        content: shouldGenerateContent ? content : newTopicData.content,
+        title,
+        description,
+        content: shouldGenerateContent ? content || null : manualContent,
         level,
         order: nextOrder,
         sources,
-        createdAt: new Date()
+        createdAt: serverTimestamp(),
       };
 
       await addDoc(collection(db, `roadmaps/${roadmap.id}/topics`), topicData);
-      
+
       setAddingTopicToLevel(null);
       setNewTopicData({ title: '', content: '', description: '' });
-    } catch (error) {
-      console.error("Error creating topic:", error);
-      handleFirestoreError(error, OperationType.WRITE, `roadmaps/${roadmap.id}/topics`);
+    } catch (error: any) {
+      console.error('Error creating topic:', error);
+      setActionError(
+        typeof error?.code === 'string'
+          ? handleFirestoreError(error, OperationType.WRITE, `roadmaps/${roadmap.id}/topics`).message
+          : error?.message || 'Não foi possível criar o tópico. Tente novamente.'
+      );
     } finally {
       setIsAddingTopic(false);
     }
   };
 
   const handleDeleteTopic = async (topicId: string) => {
+    if (!user) {
+      throw new Error('Entre na sua conta para excluir tópicos.');
+    }
+
     try {
       const topicRef = doc(db, `roadmaps/${roadmap.id}/topics`, topicId);
       await deleteDoc(topicRef);
+
+      // Remove this user's progress for the deleted topic. The query is
+      // constrained by userId so it is allowed by Firestore Rules and does not
+      // need a composite index.
+      try {
+        const progressSnapshot = await getDocs(
+          query(collection(db, 'userProgress'), where('userId', '==', user.uid))
+        );
+        const staleProgress = progressSnapshot.docs.filter(
+          (progressDoc) => progressDoc.data().topicId === topicId
+        );
+        await Promise.all(staleProgress.map((progressDoc) => deleteDoc(progressDoc.ref)));
+      } catch (progressError) {
+        console.warn('Tópico excluído, mas não foi possível limpar o progresso:', progressError);
+      }
     } catch (error) {
-      console.error("Error deleting topic:", error);
-      handleFirestoreError(error, OperationType.DELETE, `roadmaps/${roadmap.id}/topics/${topicId}`);
+      console.error('Error deleting topic:', error);
+      throw handleFirestoreError(
+        error,
+        OperationType.DELETE,
+        `roadmaps/${roadmap.id}/topics/${topicId}`
+      );
     }
   };
 
   const handleGenerateChallenge = async (topic: Topic) => {
     if (isGeneratingChallenge[topic.id]) return;
-    
-    setIsGeneratingChallenge(prev => ({ ...(prev || {}), [topic.id]: true }));
-    setChallengeError(prev => ({ ...(prev || {}), [topic.id]: '' }));
+    if (!user) {
+      setChallengeError((prev) => ({
+        ...(prev || {}),
+        [topic.id]: 'Entre na sua conta para gerar desafios com IA.',
+      }));
+      return;
+    }
+    if (!isAuthor) {
+      setChallengeError((prev) => ({
+        ...(prev || {}),
+        [topic.id]: 'Apenas o autor da trilha pode gerar desafios com IA.',
+      }));
+      return;
+    }
+
+    setIsGeneratingChallenge((prev) => ({ ...(prev || {}), [topic.id]: true }));
+    setChallengeError((prev) => ({ ...(prev || {}), [topic.id]: '' }));
 
     try {
-      const challenge = await generateChallenge(topic.title, topic.content || '');
+      const challenge = await generateChallenge(
+        topic.title.slice(0, 200),
+        (topic.content || '').slice(0, 8000)
+      );
       const topicRef = doc(db, `roadmaps/${roadmap.id}/topics`, topic.id);
       await updateDoc(topicRef, { challenge });
-    } catch (error) {
-      console.error("Error generating challenge:", error);
-      setChallengeError(prev => ({ ...(prev || {}), [topic.id]: "Falha ao gerar o desafio. Tente novamente." }));
-      handleFirestoreError(error, OperationType.UPDATE, `roadmaps/${roadmap.id}/topics/${topic.id}`);
+    } catch (error: any) {
+      console.error('Error generating challenge:', error);
+      setChallengeError((prev) => ({
+        ...(prev || {}),
+        [topic.id]:
+          typeof error?.code === 'string'
+            ? handleFirestoreError(
+                error,
+                OperationType.UPDATE,
+                `roadmaps/${roadmap.id}/topics/${topic.id}`
+              ).message
+            : error?.message || 'Falha ao gerar o desafio. Tente novamente.',
+      }));
     } finally {
-      setIsGeneratingChallenge(prev => ({ ...(prev || {}), [topic.id]: false }));
+      setIsGeneratingChallenge((prev) => ({ ...(prev || {}), [topic.id]: false }));
     }
   };
 
   const handleGenerateContent = async (topic: Topic) => {
     if (isGeneratingContent[topic.id]) return;
+    if (!user) {
+      setContentError((prev) => ({
+        ...(prev || {}),
+        [topic.id]: 'Entre na sua conta para gerar conteúdo com IA.',
+      }));
+      return;
+    }
+    if (!isAuthor) {
+      setContentError((prev) => ({
+        ...(prev || {}),
+        [topic.id]: 'Apenas o autor da trilha pode gerar conteúdo com IA.',
+      }));
+      return;
+    }
 
-    setIsGeneratingContent(prev => ({ ...(prev || {}), [topic.id]: true }));
-    setContentError(prev => ({ ...(prev || {}), [topic.id]: '' }));
+    setIsGeneratingContent((prev) => ({ ...(prev || {}), [topic.id]: true }));
+    setContentError((prev) => ({ ...(prev || {}), [topic.id]: '' }));
 
     try {
-      const res = await curateContent(topic.title, roadmap.mode, {
-        title: roadmap.title,
-        originalTopic: roadmap.originalTopic,
-      });
+      // forceContent: research-mode roadmaps store only sources by default,
+      // but the explicit "Gerar Conteúdo" action must always generate text.
+      const res = await curateContent(
+        topic.title,
+        roadmap.mode,
+        {
+          title: roadmap.title,
+          originalTopic: roadmap.originalTopic,
+        },
+        { forceContent: true }
+      );
       if (!res.content) {
         throw new Error('A IA não gerou conteúdo para este tópico.');
       }
       const topicRef = doc(db, `roadmaps/${roadmap.id}/topics`, topic.id);
-      const updatedSources = res.sources && res.sources.length > 0 ? res.sources : (topic.sources || []);
+      const updatedSources =
+        res.sources && res.sources.length > 0 ? res.sources : topic.sources || [];
       await updateDoc(topicRef, {
         content: res.content,
         sources: updatedSources,
       });
     } catch (error: any) {
       console.error('Error generating content:', error);
-      setContentError(prev => ({
+      setContentError((prev) => ({
         ...(prev || {}),
-        [topic.id]: error?.message || 'Falha ao gerar conteúdo explicativo. Tente novamente em instantes.'
+        [topic.id]:
+          typeof error?.code === 'string'
+            ? handleFirestoreError(
+                error,
+                OperationType.UPDATE,
+                `roadmaps/${roadmap.id}/topics/${topic.id}`
+              ).message
+            : error?.message ||
+              'Falha ao gerar conteúdo explicativo. Tente novamente em instantes.',
       }));
     } finally {
-      setIsGeneratingContent(prev => ({ ...(prev || {}), [topic.id]: false }));
+      setIsGeneratingContent((prev) => ({ ...(prev || {}), [topic.id]: false }));
     }
   };
 
@@ -257,7 +375,10 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
   }, [topics]);
 
   const totalTopics = topics.length;
-  const completedTopics = Object.values(progress).filter(s => s === 'completed').length;
+  const existingTopicIds = React.useMemo(() => new Set(topics.map((topic) => topic.id)), [topics]);
+  const completedTopics = Object.entries(progress).filter(
+    ([topicId, status]) => status === 'completed' && existingTopicIds.has(topicId)
+  ).length;
   const progressPercentage = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
 
   return (
@@ -269,6 +390,34 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
         </div>
         <span className="text-xs font-bold whitespace-nowrap">{progressPercentage}% Concluído</span>
       </div>
+
+      {!user && (
+        <div className="alert alert-info shadow-sm flex flex-col sm:flex-row sm:items-center gap-3 -mt-6">
+          <span className="text-sm">
+            Entre na sua conta para salvar progresso e gerar conteúdo/desafios com IA.
+          </span>
+          <button
+            className="btn btn-sm btn-primary sm:ml-auto"
+            onClick={() => signInWithPopup(auth, googleProvider)}
+          >
+            Entrar com Google
+          </button>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="alert alert-error shadow-sm -mt-6">
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span className="text-sm">{actionError}</span>
+          <button
+            className="btn btn-ghost btn-xs ml-auto"
+            onClick={() => setActionError(null)}
+            aria-label="Fechar aviso"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <div className="text-center mb-16">
         <div className="flex flex-wrap items-center justify-center gap-2 mb-4">
@@ -359,6 +508,8 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
                         isEditMode={isEditMode}
                         onUpdateTopic={(updates) => handleUpdateTopic(topic.id, updates)}
                         onDeleteTopic={() => handleDeleteTopic(topic.id)}
+                        canTrackProgress={!!user}
+                        canUseAI={!!user && isAuthor}
                       />
                     ))}
                   </SortableContext>
@@ -377,6 +528,7 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
                               className="input input-bordered w-full" 
                               placeholder="Ex: Introdução ao TypeScript"
                               value={newTopicData.title}
+                              maxLength={200}
                               onChange={(e) => setNewTopicData({...newTopicData, title: e.target.value})}
                             />
                           </div>
@@ -389,6 +541,7 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
                               className="textarea textarea-bordered min-h-[100px]" 
                               placeholder="Se deixar vazio, a IA gerará o conteúdo com base na descrição abaixo."
                               value={newTopicData.content}
+                              maxLength={20000}
                               onChange={(e) => setNewTopicData({...newTopicData, content: e.target.value})}
                             />
                           </div>
@@ -402,6 +555,7 @@ export default function RoadmapView({ roadmap, topics, progress, onUpdateProgres
                                 className="textarea textarea-bordered border-primary/30" 
                                 placeholder="Descreva o que este tópico deve cobrir para que a IA gere o conteúdo e fontes corretamente."
                                 value={newTopicData.description}
+                                maxLength={500}
                                 onChange={(e) => setNewTopicData({...newTopicData, description: e.target.value})}
                               />
                             </div>
@@ -575,7 +729,9 @@ function TopicCard({
   contentError,
   isEditMode, 
   onUpdateTopic, 
-  onDeleteTopic 
+  onDeleteTopic,
+  canTrackProgress,
+  canUseAI,
 }: { 
   topic: Topic, 
   isExpanded: boolean, 
@@ -591,13 +747,18 @@ function TopicCard({
   contentError?: string,
   isEditMode: boolean,
   onUpdateTopic: (updates: Partial<Topic>) => Promise<void>,
-  onDeleteTopic: () => Promise<void>
+  onDeleteTopic: () => Promise<void>,
+  canTrackProgress: boolean,
+  canUseAI: boolean,
 }) {
   const [localEditMode, setLocalEditMode] = React.useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [editedTitle, setEditedTitle] = React.useState(topic.title);
   const [editedContent, setEditedContent] = React.useState(topic.content || '');
   const [isSaving, setIsSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const [deleteTopicError, setDeleteTopicError] = React.useState<string | null>(null);
+  const [isDeletingTopic, setIsDeletingTopic] = React.useState(false);
   const [showAddSource, setShowAddSource] = React.useState(false);
   const [newSource, setNewSource] = React.useState<{
     type: 'book' | 'article' | 'video' | 'guide';
@@ -622,39 +783,85 @@ function TopicCard({
 
   const handleSave = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!editedTitle.trim()) {
+      setSaveError('O título do tópico não pode ficar vazio.');
+      return;
+    }
     setIsSaving(true);
-    await onUpdateTopic({ title: editedTitle, content: editedContent });
-    setIsSaving(false);
-    setLocalEditMode(false);
+    setSaveError(null);
+    try {
+      await onUpdateTopic({
+        title: editedTitle.trim().slice(0, 200),
+        content: editedContent,
+      });
+      setLocalEditMode(false);
+    } catch (error: any) {
+      setSaveError(error?.message || 'Não foi possível salvar o tópico.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleCancel = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditedTitle(topic.title);
     setEditedContent(topic.content || '');
+    setSaveError(null);
     setLocalEditMode(false);
   };
 
   const handleAddSource = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const sourceToAdd = { ...newSource, isManual: true };
-    const currentSources = topic.sources || [];
-    await onUpdateTopic({ sources: [...currentSources, sourceToAdd] });
-    setNewSource({
-      type: 'guide',
-      title: '',
-      url: '',
-      author: '',
-      description: '',
-      searchQuery: '',
-    });
-    setShowAddSource(false);
+    setSaveError(null);
+
+    const title = newSource.title.trim();
+    const url = newSource.url.trim();
+
+    if (!title) {
+      setSaveError('Informe um título para a fonte.');
+      return;
+    }
+
+    if (!isSafeHttpUrl(url)) {
+      setSaveError('A URL da fonte deve começar com http:// ou https:// e apontar para um site público.');
+      return;
+    }
+
+    try {
+      const sourceToAdd = {
+        ...newSource,
+        title: title.slice(0, 200),
+        url,
+        author: newSource.author.trim().slice(0, 120),
+        description: newSource.description.trim().slice(0, 500),
+        searchQuery: newSource.searchQuery.trim().slice(0, 200),
+        isManual: true,
+      };
+      const currentSources = topic.sources || [];
+      await onUpdateTopic({ sources: [...currentSources, sourceToAdd] });
+      setNewSource({
+        type: 'guide',
+        title: '',
+        url: '',
+        author: '',
+        description: '',
+        searchQuery: '',
+      });
+      setShowAddSource(false);
+    } catch (error: any) {
+      setSaveError(error?.message || 'Não foi possível adicionar a fonte.');
+    }
   };
 
   const handleRemoveSource = async (index: number) => {
-    const currentSources = [...(topic.sources || [])];
-    currentSources.splice(index, 1);
-    await onUpdateTopic({ sources: currentSources });
+    setSaveError(null);
+    try {
+      const currentSources = [...(topic.sources || [])];
+      currentSources.splice(index, 1);
+      await onUpdateTopic({ sources: currentSources });
+    } catch (error: any) {
+      setSaveError(error?.message || 'Não foi possível remover a fonte.');
+    }
   };
 
   const getStatusIcon = () => {
@@ -678,7 +885,10 @@ function TopicCard({
       "card bg-base-100 border transition-all duration-300 overflow-hidden",
       isExpanded ? "border-primary/30 shadow-xl shadow-primary/5" : "border-base-300 shadow-sm hover:border-base-content/20"
     )}>
-      <div className="p-4 md:p-6 flex items-center justify-between gap-4 cursor-pointer" onClick={onToggle}>
+      <div
+        className="p-4 md:p-6 flex items-center justify-between gap-4 cursor-pointer"
+        onClick={onToggle}
+      >
         <div className="flex items-center gap-4">
           <button 
             onClick={(e) => {
@@ -686,7 +896,17 @@ function TopicCard({
               const nextStatus: ProgressStatus = status === 'not-started' ? 'in-progress' : status === 'in-progress' ? 'completed' : 'not-started';
               onUpdateStatus(nextStatus);
             }}
-            className="hover:scale-110 transition-transform"
+            disabled={!canTrackProgress}
+            aria-label={
+              canTrackProgress
+                ? `Alterar progresso do tópico (${getStatusText()})`
+                : 'Entre na sua conta para salvar seu progresso'
+            }
+            title={canTrackProgress ? 'Alterar progresso' : 'Entre para salvar seu progresso'}
+            className={cn(
+              'hover:scale-110 transition-transform',
+              !canTrackProgress && 'opacity-50 cursor-not-allowed hover:scale-100'
+            )}
           >
             {getStatusIcon()}
           </button>
@@ -696,6 +916,7 @@ function TopicCard({
                 <input 
                   type="text" 
                   value={editedTitle}
+                  maxLength={200}
                   onChange={(e) => setEditedTitle(e.target.value)}
                   className="input input-bordered input-sm w-full font-bold"
                   placeholder="Título do tópico"
@@ -723,6 +944,8 @@ function TopicCard({
                   setLocalEditMode(true);
                   if (!isExpanded) onToggle();
                 }}
+                aria-label="Editar tópico"
+                title="Editar tópico"
                 className="btn btn-ghost btn-xs btn-circle text-primary"
               >
                 <Edit3 className="w-4 h-4" />
@@ -732,6 +955,8 @@ function TopicCard({
                   e.stopPropagation();
                   setShowDeleteConfirm(true);
                 }}
+                aria-label="Excluir tópico"
+                title="Excluir tópico"
                 className="btn btn-ghost btn-xs btn-circle text-error"
               >
                 <Trash2 className="w-4 h-4" />
@@ -743,21 +968,34 @@ function TopicCard({
               <button 
                 onClick={handleSave}
                 disabled={isSaving}
+                aria-label="Salvar alterações do tópico"
+                title="Salvar alterações"
                 className="btn btn-success btn-xs btn-circle"
               >
                 {isSaving ? <span className="loading loading-spinner loading-xs"></span> : <Save className="w-4 h-4" />}
               </button>
               <button 
                 onClick={handleCancel}
+                aria-label="Cancelar edição"
+                title="Cancelar edição"
                 className="btn btn-ghost btn-xs btn-circle"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           )}
-          <div className="text-base-content/30">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? 'Recolher tópico' : 'Expandir tópico'}
+            className="btn btn-ghost btn-xs btn-circle text-base-content/50"
+          >
             {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-          </div>
+          </button>
         </div>
       </div>
 
@@ -770,6 +1008,12 @@ function TopicCard({
             transition={{ duration: 0.3 }}
           >
             <div className="px-6 pb-8 pt-2 border-t border-base-300 space-y-8">
+              {saveError && (
+                <div className="alert alert-error text-xs py-2 px-3 shadow-sm flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{saveError}</span>
+                </div>
+              )}
               {localEditMode ? (
                 <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
                   <div className="form-control">
@@ -778,6 +1022,7 @@ function TopicCard({
                     </label>
                     <textarea 
                       value={editedContent}
+                      maxLength={20000}
                       onChange={(e) => setEditedContent(e.target.value)}
                       className="textarea textarea-bordered min-h-[300px] font-mono text-sm leading-relaxed"
                       placeholder="Escreva o conteúdo explicativo aqui..."
@@ -804,9 +1049,13 @@ function TopicCard({
                             e.stopPropagation();
                             onGenerateContent(topic);
                           }}
-                          disabled={isGeneratingContent}
+                          disabled={isGeneratingContent || !canUseAI}
                           className="btn btn-ghost btn-xs text-base-content/50 hover:text-primary gap-1"
-                          title="Regenerar aula completa com IA"
+                          title={
+                            canUseAI
+                              ? 'Regenerar aula completa com IA'
+                              : 'Somente o autor da trilha pode gerar conteúdo com IA'
+                          }
                         >
                           {isGeneratingContent ? (
                             <>
@@ -838,8 +1087,13 @@ function TopicCard({
                           e.stopPropagation();
                           onGenerateContent(topic);
                         }}
-                        disabled={isGeneratingContent}
+                        disabled={isGeneratingContent || !canUseAI}
                         className="btn btn-primary btn-sm gap-2 shrink-0 shadow-md shadow-primary/20"
+                        title={
+                          canUseAI
+                            ? 'Gerar conteúdo com IA'
+                            : 'Somente o autor da trilha pode gerar conteúdo com IA'
+                        }
                       >
                         {isGeneratingContent ? (
                           <>
@@ -865,7 +1119,7 @@ function TopicCard({
                 </div>
               )}
 
-              {topic.sources && topic.sources.length > 0 && (
+              {(isEditMode || (topic.sources && topic.sources.length > 0)) && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
@@ -909,6 +1163,7 @@ function TopicCard({
                             className="input input-bordered input-sm w-full" 
                             placeholder="Ex: Documentação Oficial do React"
                             value={newSource.title}
+                            maxLength={200}
                             onChange={(e) => setNewSource({...newSource, title: e.target.value})}
                           />
                         </div>
@@ -919,6 +1174,7 @@ function TopicCard({
                             className="input input-bordered input-sm w-full" 
                             placeholder="https://react.dev/learn"
                             value={newSource.url}
+                            maxLength={500}
                             onChange={(e) => setNewSource({...newSource, url: e.target.value})}
                           />
                         </div>
@@ -929,6 +1185,7 @@ function TopicCard({
                             className="input input-bordered input-sm w-full" 
                             placeholder="Ex: React Docs, MDN, Rocketseat"
                             value={newSource.author}
+                            maxLength={120}
                             onChange={(e) => setNewSource({...newSource, author: e.target.value})}
                           />
                         </div>
@@ -939,6 +1196,7 @@ function TopicCard({
                             className="input input-bordered input-sm w-full" 
                             placeholder="Breve descrição do que este material ensina..."
                             value={newSource.description}
+                            maxLength={500}
                             onChange={(e) => setNewSource({...newSource, description: e.target.value})}
                           />
                         </div>
@@ -949,6 +1207,7 @@ function TopicCard({
                             className="input input-bordered input-sm w-full" 
                             placeholder="Ex: tutorial componentes react hooks estado 2024 pt-br"
                             value={newSource.searchQuery}
+                            maxLength={200}
                             onChange={(e) => setNewSource({...newSource, searchQuery: e.target.value})}
                           />
                         </div>
@@ -967,7 +1226,9 @@ function TopicCard({
                   )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {topic.sources.map((source, idx) => (
+                    {(topic.sources || []).map((source, idx) => {
+                      const sourceUrl = isSafeHttpUrl(source.url) ? source.url : '#';
+                      return (
                       <div key={idx} className="relative group flex flex-col justify-between p-4 rounded-xl border border-base-300 bg-base-100 hover:border-primary/50 hover:shadow-sm transition-all">
                         <div className="space-y-2.5">
                           <div className="flex items-center justify-between gap-2">
@@ -984,7 +1245,7 @@ function TopicCard({
                           </div>
 
                           <a 
-                            href={source.url} 
+                            href={sourceUrl} 
                             target="_blank" 
                             rel="noopener noreferrer"
                             className="group/link block"
@@ -1018,7 +1279,7 @@ function TopicCard({
 
                           <div className="flex items-center justify-between pt-1">
                             <a
-                              href={source.url}
+                              href={sourceUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="btn btn-xs btn-outline btn-primary gap-1 group/btn"
@@ -1041,12 +1302,14 @@ function TopicCard({
                             }}
                             className="absolute top-2 right-2 btn btn-ghost btn-xs btn-circle text-error opacity-0 group-hover:opacity-100 transition-opacity"
                             title="Remover fonte"
+                            aria-label="Remover fonte"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1070,8 +1333,13 @@ function TopicCard({
                     )}
                     <button 
                       onClick={() => onGenerateChallenge(topic)}
-                      disabled={isGeneratingChallenge}
+                      disabled={isGeneratingChallenge || !canUseAI}
                       className="btn btn-primary btn-sm gap-2"
+                      title={
+                        canUseAI
+                          ? 'Gerar desafio com IA'
+                          : 'Somente o autor da trilha pode gerar desafios com IA'
+                      }
                     >
                       {isGeneratingChallenge ? (
                         <>
@@ -1108,17 +1376,48 @@ function TopicCard({
                 Tem certeza que deseja excluir o tópico <strong>&quot;{topic.title}&quot;</strong>? Esta ação não pode ser desfeita.
               </p>
             </div>
+            {deleteTopicError && (
+              <div className="alert alert-error text-xs py-2 px-3">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{deleteTopicError}</span>
+              </div>
+            )}
             <div className="flex flex-col gap-2 pt-2">
               <button 
                 className="btn btn-error btn-sm w-full" 
+                disabled={isDeletingTopic}
                 onClick={async () => {
-                  await onDeleteTopic();
-                  setShowDeleteConfirm(false);
+                  setIsDeletingTopic(true);
+                  setDeleteTopicError(null);
+                  try {
+                    await onDeleteTopic();
+                    setShowDeleteConfirm(false);
+                  } catch (error: any) {
+                    setDeleteTopicError(error?.message || 'Não foi possível excluir o tópico.');
+                  } finally {
+                    setIsDeletingTopic(false);
+                  }
                 }}
               >
-                Sim, Excluir Tópico
+                {isDeletingTopic ? (
+                  <>
+                    <span className="loading loading-spinner loading-xs"></span>
+                    Excluindo...
+                  </>
+                ) : (
+                  'Sim, Excluir Tópico'
+                )}
               </button>
-              <button className="btn btn-ghost btn-sm w-full" onClick={() => setShowDeleteConfirm(false)}>Cancelar</button>
+              <button
+                className="btn btn-ghost btn-sm w-full"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteTopicError(null);
+                }}
+                disabled={isDeletingTopic}
+              >
+                Cancelar
+              </button>
             </div>
           </div>
         </div>
@@ -1131,20 +1430,28 @@ function ChallengeDisplay({ challenge }: { challenge: Challenge }) {
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<number, number>>({});
   const [showExplanations, setShowExplanations] = React.useState<Record<number, boolean>>({});
   const [showSolution, setShowSolution] = React.useState(false);
+  const questions = Array.isArray(challenge.questions) ? challenge.questions : [];
+  const activity = challenge.activity;
+  const hasQuestions = questions.length > 0;
+
+  if (!hasQuestions && !activity) {
+    return null;
+  }
 
   return (
     <div className="space-y-8">
+      {hasQuestions && (
       <div className="space-y-6">
         <h4 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
           <HelpCircle className="w-4 h-4 text-primary" />
           Quiz de Conhecimento
         </h4>
         <div className="space-y-6">
-          {challenge.questions.map((q, qIdx) => (
+          {questions.map((q, qIdx) => (
             <div key={qIdx} className="space-y-3">
               <p className="text-sm font-medium">{qIdx + 1}. {q.question}</p>
               <div className="grid grid-cols-1 gap-2">
-                {q.options.map((opt, oIdx) => {
+                {(q.options || []).map((opt, oIdx) => {
                   const isSelected = selectedAnswers[qIdx] === oIdx;
                   const isCorrect = oIdx === q.correctAnswer;
                   const showResult = showExplanations[qIdx];
@@ -1183,7 +1490,9 @@ function ChallengeDisplay({ challenge }: { challenge: Challenge }) {
           ))}
         </div>
       </div>
+      )}
 
+      {activity && (
       <div className="space-y-4">
         <h4 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
           <Trophy className="w-4 h-4 text-secondary" />
@@ -1191,15 +1500,15 @@ function ChallengeDisplay({ challenge }: { challenge: Challenge }) {
         </h4>
         <div className="bg-secondary/5 border border-secondary/20 rounded-2xl p-6 space-y-4">
           <div>
-            <h5 className="font-bold text-secondary">{challenge.activity.title}</h5>
+            <h5 className="font-bold text-secondary">{activity.title}</h5>
             <p className="text-sm text-base-content/70 mt-2 leading-relaxed">
-              {challenge.activity.description}
+              {activity.description}
             </p>
           </div>
           <div className="space-y-2">
             <p className="text-[10px] font-bold uppercase tracking-wider text-secondary/60">Requisitos</p>
             <ul className="space-y-1">
-              {challenge.activity.requirements.map((req, idx) => (
+              {(activity.requirements || []).map((req, idx) => (
                 <li key={idx} className="text-xs flex items-start gap-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-secondary mt-1.5 flex-shrink-0" />
                   <span>{req}</span>
@@ -1208,7 +1517,7 @@ function ChallengeDisplay({ challenge }: { challenge: Challenge }) {
             </ul>
           </div>
 
-          {challenge.activity.solution && (
+          {activity.solution && (
             <div className="pt-4 border-t border-secondary/10">
               {showSolution ? (
                 <motion.div
@@ -1218,7 +1527,7 @@ function ChallengeDisplay({ challenge }: { challenge: Challenge }) {
                 >
                   <p className="text-[10px] font-bold uppercase tracking-wider text-secondary/60">Solução Sugerida</p>
                   <div className="prose prose-sm max-w-none prose-p:text-xs prose-code:text-secondary prose-code:bg-secondary/10 prose-pre:bg-base-300">
-                    <ReactMarkdown>{challenge.activity.solution}</ReactMarkdown>
+                    <ReactMarkdown>{activity.solution}</ReactMarkdown>
                   </div>
                   <button 
                     onClick={() => setShowSolution(false)}
@@ -1240,6 +1549,7 @@ function ChallengeDisplay({ challenge }: { challenge: Challenge }) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

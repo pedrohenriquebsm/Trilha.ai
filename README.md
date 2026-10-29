@@ -1,45 +1,156 @@
 # Trilha.ai
 
-Plataforma de geração automatizada de roadmaps de estudo utilizando Inteligência Artificial para tecnologia e desenvolvimento de software.
+Plataforma de geração de trilhas de estudo (roadmaps) para tecnologia, com curadoria de fontes, conteúdo explicativo sob demanda e desafios práticos gerados por IA.
 
-## 🚀 Arquitetura (Next.js 15 App Router)
+## Stack
 
-O projeto foi migrado de uma SPA em Vite + Express para **Next.js 15 (App Router)** em TypeScript, unificando front-end e rotas de API em uma única arquitetura robusta.
+- **Next.js 16.4.3** (App Router, Route Handlers) + **React 19.3.1** + **TypeScript 7** (Node.js 22+)
+- **Tailwind CSS 4.3** + **daisyUI 5.7.50**
+- **Firebase Auth** (Google) + **Cloud Firestore 13.1**
+- **OpenRouter** (modelos gratuitos, via SDK da OpenAI 7.45)
+- **Vitest** para testes unitários
 
-### Estrutura de Rotas e Pastas
+> O TypeScript 7 usa o compilador nativo. Como o `typescript-eslint` ainda depende da API do TypeScript 6, o ESLint usa `@babel/eslint-parser` apenas para análise sintática. A checagem de tipos continua sendo feita por `npm run typecheck` (`tsc --noEmit`).
 
-- `src/app/layout.tsx`: Root Layout com tema claro/escuro, fontes Google e cabeçalho de navegação.
-- `src/app/page.tsx`: Página inicial com Hero e lista de trilhas em destaque.
-- `src/app/discover/page.tsx`: Busca em tempo real de trilhas públicas.
-- `src/app/create/page.tsx`: Criação de roadmaps guiada por IA em 3 etapas.
-- `src/app/roadmap/[id]/page.tsx`: Visualização da trilha com Dnd-kit (drag-and-drop), quizzes, desafios práticos e progresso em nuvem.
-- `src/app/not-found.tsx`: Página customizada para rotas não encontradas.
-- `src/app/api/gemini/enhance-prompt/route.ts`: Route Handler para aprimoramento pedagógico de prompts.
-- `src/app/api/gemini/decompose-topic/route.ts`: Route Handler para decomposição nos 5 níveis hierárquicos.
-- `src/app/api/gemini/curate-content/route.ts`: Route Handler para curadoria didática e busca de fontes (Search grounding).
-- `src/app/api/gemini/generate-challenge/route.ts`: Route Handler para quizzes e atividades práticas com código.
-- `src/app/api/gemini/topic-content-and-sources/route.ts`: Route Handler para adição sob demanda de novos tópicos.
+> O projeto **não usa Gemini** e não precisa de `GEMINI_API_KEY`. A única chave de IA necessária é `OPENROUTER_API_KEY`.
+>
+> O `metadata.json` mantém a capability de runtime do AI Studio por compatibilidade com a plataforma; ela não é usada pelo código e não exige chave do Gemini.
 
-### Variáveis de Ambiente
+## Rodando no Google AI Studio
 
-Configure as seguintes variáveis no arquivo `.env`:
+O projeto foi mantido compatível com o ambiente de desenvolvimento do AI Studio:
 
-```env
-GEMINI_API_KEY=sua_chave_gemini_aqui
-```
+- `npm run dev` escuta em `0.0.0.0:3000` (obrigatório para o proxy do AI Studio).
+- Não há servidor customizado, `output: "standalone"` nem dependência de arquivos locais fora do repositório.
+- Os headers de segurança **não bloqueiam iframe** (o preview do AI Studio roda a aplicação dentro de um iframe).
+- As fontes usam `<link>`/`@import` do Google Fonts com fallback para fontes do sistema; não há download de fonte no build.
+- A chave da IA é lida **somente no servidor** (`process.env.OPENROUTER_API_KEY`).
 
-### Scripts Disponíveis
+### Passos
+
+1. Instale as dependências:
+
+   ```bash
+   npm install
+   ```
+
+2. No AI Studio, abra **Settings → Secrets** e cadastre:
+
+   | Secret | Obrigatória | Descrição |
+   | --- | --- | --- |
+   | `OPENROUTER_API_KEY` | Sim | Chave da OpenRouter usada pelos Route Handlers. |
+   | `OPENROUTER_MODEL` | Não | Modelo padrão. Se vazio, usa `openrouter/free`. |
+   | `NEXT_PUBLIC_APP_URL` | Não | URL pública. O AI Studio injeta `APP_URL` automaticamente. |
+
+3. Inicie o servidor:
+
+   ```bash
+   npm run dev
+   ```
+
+4. Publique as regras do Firestore (uma vez por projeto, ou após alterá-las):
+
+   ```bash
+   npx firebase-tools deploy --only firestore:rules
+   ```
+
+   O projeto e o database ID já estão em `firebase.json` / `.firebaserc`.
+
+> **Importante:** o AI Studio normalmente instala as dependências e executa `npm run dev` por conta própria. O `package-lock.json` está versionado para builds reproduzíveis; o antigo `bun.lock` foi removido por estar inconsistente.
+
+## Variáveis de ambiente
+
+Copie `.env.example` para `.env.local` apenas se estiver rodando fora do AI Studio.
 
 ```bash
-# Iniciar servidor de desenvolvimento na porta 3000
-npm run dev
-
-# Gerar build de produção
-npm run build
-
-# Executar build de produção
-npm run start
-
-# Executar linter
-npm run lint
+OPENROUTER_API_KEY="sk-or-..."
+OPENROUTER_MODEL="openrouter/free"
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ```
+
+`OPENROUTER_MODEL` deve ser um ID válido em <https://openrouter.ai/models>. O fallback interno usa `openrouter/free` e `google/gemma-4-26b-a4b-it:free`.
+
+## Como a geração funciona
+
+A criação de uma trilha usa quatro chamadas de IA em sequência:
+
+1. **Agente 1 — Prompt Enhancer**: refina o escopo do tema.
+2. **Agente 2 — Curriculum Architect**: propõe tópicos e descrições nos 5 níveis.
+3. **Agente 3 — References Curator**: sugere documentações/livros canônicos.
+4. **Agente 4 — Roadmap Serializer**: devolve o JSON compacto (TOON) validado pelo parser.
+
+O primeiro tópico é pré-curado para onboarding; os demais podem ser expandidos sob demanda na página da trilha. Em **Research Mode**, a trilha nasce apenas com fontes; o botão **Gerar Conteúdo com IA** força a geração do texto explicativo.
+
+### Níveis
+
+`0` Fundamentos / Pré-requisitos · `1` Iniciante · `2` Intermediário · `3` Avançado · `4` Próximos Passos
+
+## Segurança
+
+- **Todas as rotas `/api/gemini/*` exigem Firebase ID Token** (`Authorization: Bearer ...`), validado no servidor com as chaves públicas do Google (`jose`). Não é necessário service account.
+- Rate limit em memória por usuário (30 req/min; 20 req/min nas rotas de criação).
+- Limite de tamanho e validação de todos os corpos de requisição.
+- **Regras do Firestore** impedem que o usuário aumente `credits`, troque `plan`/`role` ou altere `email`. O débito de 1 crédito é feito em transação atômica junto com a criação da trilha e dos tópicos.
+- Fontes sugeridas pela IA passam por validação de esquema e checagem de URLs obviamente quebradas (404/410), com proteção contra SSRF.
+- Headers: `X-Content-Type-Options`, `Referrer-Policy` e `Permissions-Policy`.
+
+### Limitações conhecidas
+
+- O rate limit é local à instância. Em múltiplas instâncias, use Redis/Upstash.
+- O bloqueio de cota é feito pelas regras + transação no cliente e por uma checagem de `credits > 0` nas rotas de criação. Para cobrança à prova de chamadas diretas à API, mova a transação de débito para o servidor (Cloud Functions/Admin SDK).
+- A limpeza de progresso ao excluir uma trilha remove apenas os registros do próprio usuário (as regras não permitem apagar progresso de terceiros).
+- A verificação de URLs é conservadora: links que bloqueiam bots ou expiram podem ser mantidos.
+
+## Rotas de API
+
+| Rota | Função |
+| --- | --- |
+| `POST /api/gemini/enhance-prompt` | Agente 1 — refinamento de escopo |
+| `POST /api/gemini/list-topics` | Agente 2 — grade curricular |
+| `POST /api/gemini/curate-references` | Agente 3 — referências canônicas |
+| `POST /api/gemini/structure-roadmap` | Agente 4 — JSON/TOON estruturado |
+| `POST /api/gemini/curate-content` | Conteúdo + fontes de um tópico |
+| `POST /api/gemini/topic-content-and-sources` | Conteúdo sob demanda ao adicionar tópico |
+| `POST /api/gemini/generate-challenge` | Quiz + atividade prática |
+
+Todas retornam `{ error }` com status adequado (400, 401, 402, 413, 429, 502, 503, 504).
+
+## Scripts
+
+```bash
+npm run dev        # desenvolvimento em 0.0.0.0:3000
+npm run build      # build de produção
+npm run start      # produção em 0.0.0.0:3000
+npm run lint       # ESLint (next lint)
+npm run typecheck  # tsc --noEmit
+npm run test       # Vitest
+```
+
+## Estrutura
+
+```text
+src/
+  app/
+    api/gemini/*/route.ts   # 7 Route Handlers autenticados
+    create/                 # wizard de criação (transação atômica)
+    discover/               # trilhas públicas + "Minhas Trilhas" (inclui privadas)
+    roadmap/[id]/           # detalhe da trilha
+    error.tsx, global-error.tsx, loading.tsx
+  components/               # Layout, AuthProvider, RoadmapView, cards...
+  hooks/                    # useAuth (contexto), usePublicRoadmaps, useMyRoadmaps...
+  lib/
+    apiGuard.ts, serverAuth.ts, apiError.ts
+    llm.ts, llmJson.ts, toonParser.ts
+    sourceHelper.ts, urlVerifier.ts
+  services/                 # geminiService (cliente) e contentService (servidor)
+firestore.rules             # créditos, permissões e validação
+firebase.json               # deploy das regras (database do AI Studio)
+```
+
+## Testes
+
+```bash
+npm test
+```
+
+Cobrem o parser TOON (incluindo níveis vazios, duplicatas e desafio sem quiz), o parser de JSON da IA, a validação de entrada e a seleção de fontes por palavra-chave.

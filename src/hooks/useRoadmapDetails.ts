@@ -1,15 +1,15 @@
 'use client';
 
 import React from 'react';
-import { 
-  doc, 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  getDocs, 
-  addDoc, 
-  updateDoc 
+import {
+  doc,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  getDocs,
+  addDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { Roadmap, Topic, ProgressStatus, UserProgress } from '@/src/types';
@@ -20,6 +20,7 @@ interface UseRoadmapDetailsResult {
   topics: Topic[];
   progress: Record<string, ProgressStatus>;
   loading: boolean;
+  error: Error | null;
   updateProgress: (topicId: string, status: ProgressStatus) => Promise<void>;
 }
 
@@ -27,40 +28,58 @@ interface UseRoadmapDetailsResult {
  * Custom Hook isolating real-time data subscription and progress mutations for a specific roadmap.
  * Adheres to Single Responsibility (SRP) and Separation of Concerns.
  */
-export function useRoadmapDetails(roadmapId: string, user: User | null): UseRoadmapDetailsResult {
+export function useRoadmapDetails(
+  roadmapId: string,
+  user: User | null
+): UseRoadmapDetailsResult {
   const [roadmap, setRoadmap] = React.useState<Roadmap | null>(null);
   const [topics, setTopics] = React.useState<Topic[]>([]);
   const [progress, setProgress] = React.useState<Record<string, ProgressStatus>>({});
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<Error | null>(null);
+  const userId = user?.uid;
 
   // Subscribe to roadmap and topics
   React.useEffect(() => {
     if (!roadmapId) return;
 
+    setLoading(true);
+    setError(null);
+    setRoadmap(null);
+    setTopics([]);
+
     const roadmapRef = doc(db, 'roadmaps', roadmapId);
     const unsubscribeRoadmap = onSnapshot(
-      roadmapRef, 
+      roadmapRef,
       (docSnap) => {
         if (docSnap.exists()) {
           setRoadmap({ id: docSnap.id, ...docSnap.data() } as Roadmap);
+        } else {
+          setRoadmap(null);
+          setLoading(false);
         }
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, `roadmaps/${roadmapId}`);
+      (listenerError) => {
+        setLoading(false);
+        setError(handleFirestoreError(listenerError, OperationType.GET, `roadmaps/${roadmapId}`));
       }
     );
 
     const topicsRef = collection(db, `roadmaps/${roadmapId}/topics`);
     const unsubscribeTopics = onSnapshot(
-      topicsRef, 
+      topicsRef,
       (snapshot) => {
-        const docs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Topic));
+        const docs = snapshot.docs.map(
+          (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Topic)
+        );
         setTopics(docs);
         setLoading(false);
       },
-      (error) => {
+      (listenerError) => {
         setLoading(false);
-        handleFirestoreError(error, OperationType.LIST, `roadmaps/${roadmapId}/topics`);
+        setError(
+          handleFirestoreError(listenerError, OperationType.LIST, `roadmaps/${roadmapId}/topics`)
+        );
       }
     );
 
@@ -68,66 +87,77 @@ export function useRoadmapDetails(roadmapId: string, user: User | null): UseRoad
       unsubscribeRoadmap();
       unsubscribeTopics();
     };
-  }, [roadmapId]);
+  }, [roadmapId, userId]);
 
-  // Subscribe to user progress
+  // Subscribe to user progress. The query is constrained only by userId to
+  // match the Firestore Rules read condition and avoid a composite index.
   React.useEffect(() => {
-    if (!user || !roadmapId) return;
-    const q = query(
-      collection(db, 'userProgress'),
-      where('userId', '==', user.uid),
-      where('roadmapId', '==', roadmapId)
-    );
+    if (!userId || !roadmapId) {
+      setProgress({});
+      return;
+    }
+
+    const q = query(collection(db, 'userProgress'), where('userId', '==', userId));
     const unsubscribe = onSnapshot(
-      q, 
+      q,
       (snapshot) => {
         const prog: Record<string, ProgressStatus> = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as UserProgress;
-          prog[data.topicId] = data.status;
+          if (data.roadmapId === roadmapId) {
+            prog[data.topicId] = data.status;
+          }
         });
         setProgress(prog);
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'userProgress');
+      (listenerError) => {
+        console.warn(
+          'Não foi possível carregar o progresso:',
+          handleFirestoreError(listenerError, OperationType.LIST, 'userProgress').message
+        );
       }
     );
     return () => unsubscribe();
-  }, [user, roadmapId]);
+  }, [userId, roadmapId]);
 
   // Update progress mutation
-  const updateProgress = React.useCallback(async (topicId: string, status: ProgressStatus) => {
-    if (!user || !roadmapId) return;
-    
-    try {
-      const q = query(
-        collection(db, 'userProgress'),
-        where('userId', '==', user.uid),
-        where('topicId', '==', topicId)
-      );
-      const snapshot = await getDocs(q);
-      
-      if (snapshot.empty) {
-        await addDoc(collection(db, 'userProgress'), {
-          userId: user.uid,
-          topicId,
-          roadmapId,
-          status
-        });
-      } else {
-        const docRef = doc(db, 'userProgress', snapshot.docs[0].id);
-        await updateDoc(docRef, { status });
+  const updateProgress = React.useCallback(
+    async (topicId: string, status: ProgressStatus) => {
+      if (!userId || !roadmapId) return;
+
+      try {
+        const q = query(collection(db, 'userProgress'), where('userId', '==', userId));
+        const snapshot = await getDocs(q);
+        const existing = snapshot.docs.find(
+          (progressDoc) => progressDoc.data().topicId === topicId
+        );
+
+        if (!existing) {
+          await addDoc(collection(db, 'userProgress'), {
+            userId,
+            topicId,
+            roadmapId,
+            status,
+          });
+        } else {
+          await updateDoc(existing.ref, { status });
+        }
+      } catch (updateError) {
+        console.error(
+          'Não foi possível atualizar o progresso:',
+          handleFirestoreError(updateError, OperationType.WRITE, 'userProgress').message
+        );
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'userProgress');
-    }
-  }, [user, roadmapId]);
+    },
+    [userId, roadmapId]
+  );
 
   return {
     roadmap,
     topics,
     progress,
     loading,
+    error,
     updateProgress,
   };
 }

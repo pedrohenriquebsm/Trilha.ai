@@ -1,13 +1,50 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setDoc, collection, query, where, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp, getDocFromServer, writeBatch } from 'firebase/firestore';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import {
+  getFirestore,
+  initializeFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+  writeBatch,
+} from 'firebase/firestore';
 
 // Import the Firebase configuration
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Optional source fields from the AI (publisher, author, description...) may be
+// undefined. Firestore rejects undefined by default, which would break the
+// whole roadmap transaction after the AI already ran. Ignore them instead.
+export const db = (() => {
+  try {
+    return initializeFirestore(
+      app,
+      { ignoreUndefinedProperties: true },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    // HMR/duplicate module evaluation: reuse the existing Firestore instance.
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+})();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -37,10 +74,21 @@ export interface FirestoreErrorInfo {
       email: string | null;
       photoUrl: string | null;
     }[];
-  }
+  };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+/**
+ * Logs detailed Firestore diagnostics and returns a user-friendly Error.
+ *
+ * Callers decide whether to surface the error in the UI or to rethrow it.
+ * This function deliberately does NOT throw: throwing from inside a Firestore
+ * listener or a catch block caused unhandled rejections and stuck spinners.
+ */
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): Error {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -49,52 +97,46 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
+      providerInfo:
+        auth.currentUser?.providerData.map((provider) => ({
+          providerId: provider.providerId,
+          displayName: provider.displayName,
+          email: provider.email,
+          photoUrl: provider.photoURL,
+        })) || [],
     },
     operationType,
-    path
-  }
+    path,
+  };
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
 
-// Test connection
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
+  const raw = errInfo.error.toLowerCase();
+  if (raw.includes('permission') || raw.includes('insufficient')) {
+    return new Error('Você não tem permissão para executar esta ação.');
   }
+  if (raw.includes('offline') || raw.includes('unavailable') || raw.includes('network')) {
+    return new Error('Sem conexão com o banco de dados. Verifique sua internet e tente novamente.');
+  }
+  return new Error('Não foi possível concluir a operação. Tente novamente em instantes.');
 }
 
-if (typeof window !== 'undefined') {
-  testConnection();
-}
-
-export { 
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
+export {
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
   serverTimestamp,
-  Timestamp,
-  writeBatch
+  writeBatch,
 };
 export type { FirebaseUser };

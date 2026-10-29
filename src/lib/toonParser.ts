@@ -3,7 +3,7 @@
  * Converts ultra-compact arrays or key-abbreviated JSON into standardized application types.
  */
 
-import { RoadmapDecomposition } from "@/src/types";
+import { Challenge, RoadmapDecomposition } from "@/src/types";
 
 export interface CompactTopic {
   t: string;
@@ -38,11 +38,11 @@ export function parseCompactRoadmap(data: any): RoadmapDecomposition {
   const levelsSource = data.levels || data.lv || data;
 
   const levelAliases: Record<string, string[]> = {
-    PREREQUISITES: ["PREREQUISITES", "prerequisites", "prerequisitos", "pré-requisitos", "fundamentos", "basics", "fundamentals", "level0", "0"],
-    BEGINNER: ["BEGINNER", "beginner", "iniciante", "iniciantes", "basic", "level1", "1"],
-    INTERMEDIATE: ["INTERMEDIATE", "intermediate", "intermediario", "intermediário", "intermediarios", "core", "level2", "2"],
-    ADVANCED: ["ADVANCED", "advanced", "avancado", "avançado", "avancados", "expert", "level3", "3"],
-    NEXT_STEPS: ["NEXT_STEPS", "next_steps", "nextsteps", "proximos_passos", "próximos passos", "proximosPassos", "next", "future", "level4", "4"],
+    PREREQUISITES: ["PREREQUISITES", "prerequisites", "prerequisitos", "pré-requisitos", "fundamentos", "basics", "fundamentals", "level0", "0", "p"],
+    BEGINNER: ["BEGINNER", "beginner", "iniciante", "iniciantes", "basic", "level1", "1", "b"],
+    INTERMEDIATE: ["INTERMEDIATE", "intermediate", "intermediario", "intermediário", "intermediarios", "core", "level2", "2", "i"],
+    ADVANCED: ["ADVANCED", "advanced", "avancado", "avançado", "avancados", "expert", "level3", "3", "a"],
+    NEXT_STEPS: ["NEXT_STEPS", "next_steps", "nextsteps", "proximos_passos", "próximos passos", "proximosPassos", "next", "future", "level4", "4", "n"],
   };
 
   const normalizedLevels: any = {
@@ -81,103 +81,63 @@ export function parseCompactRoadmap(data: any): RoadmapDecomposition {
     }
 
     const arrayToMap = Array.isArray(rawList) ? rawList : [];
-    normalizedLevels[standardKey] = arrayToMap.map((item: any, idx: number) => {
-      if (typeof item === "string") {
+    const seenTitles = new Set<string>();
+
+    normalizedLevels[standardKey] = arrayToMap
+      .map((item: any, idx: number) => {
+        if (typeof item === "string") {
+          return {
+            title: item,
+            description: `Estudo de ${item}`,
+            order: idx + 1,
+            searchTerms: [item],
+          };
+        }
+        const title = item?.t || item?.title || item?.name || "";
+        const description = item?.d || item?.description || item?.desc || "";
+        const order =
+          typeof item?.o === "number"
+            ? item.o
+            : typeof item?.order === "number"
+            ? item.order
+            : idx + 1;
+        const searchTerms = Array.isArray(item?.s)
+          ? item.s
+          : Array.isArray(item?.searchTerms)
+          ? item.searchTerms
+          : [title];
+
         return {
-          title: item,
-          description: `Estudo de ${item}`,
-          order: idx + 1,
-          searchTerms: [item],
+          title,
+          description,
+          order,
+          searchTerms,
         };
-      }
-      const title = item?.t || item?.title || item?.name || `Tópico ${idx + 1}`;
-      const description = item?.d || item?.description || item?.desc || "";
-      const order =
-        typeof item?.o === "number"
-          ? item.o
-          : typeof item?.order === "number"
-          ? item.order
-          : idx + 1;
-      const searchTerms = Array.isArray(item?.s)
-        ? item.s
-        : Array.isArray(item?.searchTerms)
-        ? item.searchTerms
-        : [title];
-
-      return {
-        title,
-        description,
-        order,
-        searchTerms,
-      };
-    });
-  });
-
-  const levelDefaults: Record<string, { title: string; description: string; searchTerms: string[] }[]> = {
-    PREREQUISITES: [
-      {
-        title: `Fundamentos de ${roadmapTitle}`,
-        description: `Conceitos essenciais e base teórica para iniciar os estudos`,
-        searchTerms: [roadmapTitle, "fundamentos"],
-      },
-    ],
-    BEGINNER: [
-      {
-        title: `Primeiros Passos com ${roadmapTitle}`,
-        description: `Sintaxe e estrutura inicial básica`,
-        searchTerms: [roadmapTitle, "iniciante"],
-      },
-      {
-        title: `Ambiente e Configuração`,
-        description: `Instalação de ferramentas e primeiro projeto prático`,
-        searchTerms: [roadmapTitle, "setup"],
-      },
-    ],
-    INTERMEDIATE: [
-      {
-        title: `Técnicas Intermediárias e Padrões`,
-        description: `Padrões de projeto e melhores práticas de desenvolvimento`,
-        searchTerms: [roadmapTitle, "boas praticas"],
-      },
-      {
-        title: `Gerenciamento e Fluxo de Dados`,
-        description: `Estruturação lógica e manipulação de informações`,
-        searchTerms: [roadmapTitle, "dados"],
-      },
-    ],
-    ADVANCED: [
-      {
-        title: `Arquitetura e Otimização Avançada`,
-        description: `Performance, testes automatizados e escalabilidade`,
-        searchTerms: [roadmapTitle, "arquitetura avancada"],
-      },
-      {
-        title: `Segurança e Resiliência`,
-        description: `Boas práticas de segurança e mitigação de vulnerabilidades`,
-        searchTerms: [roadmapTitle, "seguranca"],
-      },
-    ],
-    NEXT_STEPS: [
-      {
-        title: `Ecossistema e Produção`,
-        description: `CI/CD, observabilidade e publicação de projetos`,
-        searchTerms: [roadmapTitle, "producao devops"],
-      },
-    ],
-  };
-
-  // Guarantee that every single level has topics, even if the LLM omitted or truncated some levels
-  Object.keys(normalizedLevels).forEach((lvl) => {
-    if (!normalizedLevels[lvl] || normalizedLevels[lvl].length === 0) {
-      normalizedLevels[lvl] = (levelDefaults[lvl] || []).map((t, idx) => ({
-        ...t,
-        order: idx + 1,
+      })
+      .filter((topic: any) => {
+        const title = typeof topic.title === "string" ? topic.title.trim() : "";
+        if (!title) return false;
+        const key = title.toLowerCase();
+        if (seenTitles.has(key)) return false;
+        seenTitles.add(key);
+        return true;
+      })
+      .slice(0, 12)
+      .map((topic: any, idx: number) => ({
+        title: String(topic.title).trim().slice(0, 200),
+        description: String(topic.description || "").trim().slice(0, 500),
+        order: Number.isFinite(topic.order) ? Math.max(0, topic.order) : idx + 1,
+        searchTerms: (Array.isArray(topic.searchTerms) ? topic.searchTerms : [topic.title])
+          .filter((term: unknown) => typeof term === "string" && term.trim().length > 0)
+          .map((term: string) => term.trim().slice(0, 80))
+          .slice(0, 3),
       }));
-    }
   });
 
+  // Never invent topics here. An empty level means the model failed; callers
+  // must surface an error instead of silently charging a credit for a fake roadmap.
   return {
-    roadmapTitle,
+    roadmapTitle: String(roadmapTitle).trim().slice(0, 200) || "Trilha de Aprendizagem",
     levels: normalizedLevels,
   };
 }
@@ -187,7 +147,7 @@ export function parseCompactRoadmap(data: any): RoadmapDecomposition {
  * q: question, o: options, a: correctAnswer, e: explanation
  * at: activity title, ad: activity desc, ar: activity reqs, as: activity solution
  */
-export function parseCompactChallenge(data: any) {
+export function parseCompactChallenge(data: any): Challenge {
   if (!data) return { questions: [], activity: null };
 
   const rawQuestions = Array.isArray(data.questions)
@@ -197,38 +157,57 @@ export function parseCompactChallenge(data: any) {
     : [];
   const rawActivity = data.activity || data.ac || null;
 
-  const questions = rawQuestions.map((q: any) => ({
-    question: q?.question || q?.q || "Pergunta sobre o tópico",
-    options:
-      Array.isArray(q?.options) && q.options.length > 0
-        ? q.options
-        : Array.isArray(q?.o) && q.o.length > 0
-        ? q.o
-        : ["Opção A", "Opção B", "Opção C", "Opção D"],
-    correctAnswer:
+  const questions = rawQuestions.slice(0, 5).flatMap((q: any) => {
+    const question = String(q?.question || q?.q || "").trim();
+    const rawOptions = Array.isArray(q?.options)
+      ? q.options
+      : Array.isArray(q?.o)
+      ? q.o
+      : [];
+    const options = rawOptions
+      .map((option: unknown) => String(option).trim())
+      .filter((option: string) => option.length > 0)
+      .slice(0, 6);
+
+    // Skip malformed questions instead of inventing question/option text.
+    if (!question || options.length < 2) return [];
+
+    const rawAnswer =
       typeof q?.correctAnswer === "number"
         ? q.correctAnswer
         : typeof q?.a === "number"
         ? q.a
-        : 0,
-    explanation: q?.explanation || q?.e || "Explicação da resposta correta.",
-  }));
+        : 0;
 
-  const activity = rawActivity
-    ? {
-        title: rawActivity.title || rawActivity.t || "Atividade Prática",
-        description:
-          rawActivity.description ||
-          rawActivity.d ||
-          "Implemente uma solução prática para fixar o conteúdo.",
-        requirements: Array.isArray(rawActivity.requirements)
-          ? rawActivity.requirements
-          : Array.isArray(rawActivity.r)
-          ? rawActivity.r
-          : ["Praticar os conceitos estudados"],
-        solution: rawActivity.solution || rawActivity.s || "",
-      }
-    : null;
+    return [
+      {
+        question: question.slice(0, 500),
+        options: options.map((option: string) => option.slice(0, 300)),
+        correctAnswer: rawAnswer >= 0 && rawAnswer < options.length ? rawAnswer : 0,
+        explanation: String(q?.explanation || q?.e || "").trim().slice(0, 1000),
+      },
+    ];
+  });
+
+  const activityTitle = String(rawActivity?.title || rawActivity?.t || "").trim();
+  const activity =
+    rawActivity && activityTitle
+      ? {
+          title: activityTitle.slice(0, 200),
+          description: String(rawActivity.description || rawActivity.d || "").trim().slice(0, 1500),
+          requirements: (
+            Array.isArray(rawActivity.requirements)
+              ? rawActivity.requirements
+              : Array.isArray(rawActivity.r)
+              ? rawActivity.r
+              : []
+          )
+            .filter((item: unknown) => typeof item === "string" && item.trim().length > 0)
+            .slice(0, 10)
+            .map((item: string) => item.trim().slice(0, 300)),
+          solution: String(rawActivity.solution || rawActivity.s || "").trim().slice(0, 4000),
+        }
+      : null;
 
   return { questions, activity };
 }

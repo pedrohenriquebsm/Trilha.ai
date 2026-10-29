@@ -54,6 +54,7 @@ export default function Hero({ onSearch }: HeroProps) {
             <input
               type="text"
               value={query}
+              maxLength={200}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="O que você quer aprender hoje? (ex: Docker, React)"
               className="input input-lg join-item flex-1 bg-base-100 border-2 border-l-0 border-r-0 border-base-300 focus:outline-none group-focus-within:border-primary transition-colors text-lg"

@@ -1,20 +1,41 @@
 import OpenAI from "openai";
+import { ApiError } from "./apiError";
+
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.APP_URL ||
+  "https://trilha.ai";
 
 export const client = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY || "",
+  apiKey: process.env.OPENROUTER_API_KEY || "missing-key",
   defaultHeaders: {
-    "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://trilha.ai",
+    "HTTP-Referer": APP_URL,
     "X-Title": "Trilha.ai",
   },
 });
 
-export const MODELS = [
-  process.env.OPENROUTER_MODEL || "openrouter/free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemini-2.0-flash-exp:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-];
+/**
+ * Valid free models on OpenRouter (checked against /api/v1/models).
+ * `openrouter/free` is a router alias that picks an available free model,
+ * so it is the safest default. The extra model is used as a fallback when
+ * the router itself is rate limited.
+ *
+ * Keep this list small and valid: an invalid model id makes the fallback
+ * fail with a non-retryable 404 exactly when it is needed.
+ */
+export const MODELS = Array.from(
+  new Set(
+    [
+      process.env.OPENROUTER_MODEL || "openrouter/free",
+      "openrouter/free",
+      "google/gemma-4-26b-a4b-it:free",
+    ].filter(Boolean)
+  )
+);
+
+/** Default per-request timeout. Keeps AI Studio / Cloud Run requests bounded. */
+export const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
 // Type for OpenRouter message preserving reasoning_details
 export type ORChatMessage = OpenAI.Chat.Completions.ChatCompletionMessage & {
@@ -169,7 +190,8 @@ export function stripThinking(text: string): string {
 export async function callLLM(
   messages: any[],
   maxTokens = 2000,
-  model = MODELS[0]
+  model = MODELS[0],
+  timeoutMs = DEFAULT_LLM_TIMEOUT_MS
 ): Promise<ORChatCompletion> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -179,12 +201,15 @@ export async function callLLM(
   }
 
   try {
-    // Call with reasoning: { enabled: true } as required by OpenRouter
+    // Call with reasoning: { enabled: true } as required by OpenRouter.
+    // maxRetries: 0 keeps retry/fallback logic in withRetry().
     const apiResponse = (await client.chat.completions.create({
       model,
       messages,
       max_tokens: maxTokens,
       reasoning: { enabled: true },
+      timeout: timeoutMs,
+      maxRetries: 0,
     } as any)) as ORChatCompletion;
 
     const firstMsg = apiResponse.choices?.[0]?.message;
@@ -198,6 +223,8 @@ export async function callLLM(
           model,
           messages,
           max_tokens: maxTokens,
+          timeout: timeoutMs,
+          maxRetries: 0,
         } as any)) as ORChatCompletion;
         if (directResponse.choices?.[0]?.message) {
           directResponse.choices[0].message.content = stripThinking(
@@ -220,50 +247,139 @@ export async function callLLM(
         model,
         messages,
         max_tokens: maxTokens,
+        timeout: timeoutMs,
+        maxRetries: 0,
       } as any)) as ORChatCompletion;
       return fallbackResponse;
     }
 
-    console.error("OpenRouter API error:", errorMsg);
+    console.error(`OpenRouter API error (${model}):`, errorMsg);
     throw error;
   }
 }
 
 /**
- * Executes an AI operation with automatic retry and model fallback logic.
+ * Errors that should switch to the next model/attempt.
+ * Auth and malformed-request errors will not improve by retrying.
+ */
+function isRetryableError(message: string): boolean {
+  const msg = message.toLowerCase();
+
+  if (
+    /\b(401|403)\b/.test(msg) ||
+    msg.includes("invalid api key") ||
+    msg.includes("unauthorized") ||
+    msg.includes("no auth credentials")
+  ) {
+    return false;
+  }
+
+  if (
+    /\b(400|422)\b/.test(msg) &&
+    !msg.includes("model") &&
+    !msg.includes("empty") &&
+    !msg.includes("vazia")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function friendlyError(message: string, isLastAttempt: boolean): Error {
+  const msg = message.toLowerCase();
+
+  if (
+    /\b(401|403)\b/.test(msg) ||
+    msg.includes("invalid api key") ||
+    msg.includes("unauthorized") ||
+    msg.includes("no auth credentials")
+  ) {
+    return new ApiError(
+      503,
+      "A chave OPENROUTER_API_KEY foi recusada pelo provedor. Verifique a configuração no servidor."
+    );
+  }
+
+  if (
+    msg.includes("404") ||
+    msg.includes("not found") ||
+    msg.includes("no endpoints") ||
+    msg.includes("not a valid model") ||
+    msg.includes("unavailable")
+  ) {
+    return new ApiError(
+      503,
+      "Nenhum modelo de IA gratuito está disponível no momento. Tente novamente em alguns instantes."
+    );
+  }
+
+  if (msg.includes("429") || msg.includes("rate limit") || msg.includes("quota")) {
+    return new ApiError(
+      429,
+      "Limite temporário de uso da IA atingido. Aguarde alguns segundos e tente novamente."
+    );
+  }
+
+  if (
+    isLastAttempt &&
+    (msg.includes("timeout") || msg.includes("timed out") || msg.includes("aborted"))
+  ) {
+    return new ApiError(
+      504,
+      "A IA demorou demais para responder. Tente novamente com um tema mais específico."
+    );
+  }
+
+  if (msg.includes("openrouter_api_key")) {
+    return new ApiError(
+      503,
+      "A chave OPENROUTER_API_KEY não está configurada no servidor."
+    );
+  }
+
+  if (message.startsWith("A IA") || message.startsWith("Não foi possível")) {
+    return new ApiError(502, message);
+  }
+
+  return new ApiError(502, "A IA retornou uma resposta inválida. Tente novamente.");
+}
+
+/**
+ * Executes an AI operation with automatic model fallback and retry logic.
+ * Model rotation also happens on model-not-found errors, not only on 429/5xx.
  */
 export async function withRetry<T>(
   fn: (model: string) => Promise<T>,
-  retries = 3,
-  initialDelay = 2000
+  retries = 2,
+  initialDelay = 1500
 ): Promise<T> {
   let delay = initialDelay;
+  let lastError: Error | null = null;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     const model = MODELS[attempt % MODELS.length];
     try {
       return await fn(model);
     } catch (error: any) {
-      const msg = error?.message || String(error);
-      const isRateLimit = msg.includes("429") || msg.includes("quota") || msg.includes("rate limit");
-      const isServerUnavailable =
-        msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504");
-      const isRetryable = isRateLimit || isServerUnavailable;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const message = lastError.message || String(error);
 
-      if (attempt < retries && isRetryable) {
+      if (attempt < retries && isRetryableError(message)) {
         console.warn(
-          `[OpenRouter API] Erro temporário (tentativa ${attempt + 1}/${retries}, modelo ${model}): ${msg.substring(0, 150)}... Aguardando ${delay}ms...`
+          `[OpenRouter] Tentativa ${attempt + 1}/${retries + 1} falhou (${model}): ${message.substring(
+            0,
+            180
+          )}. Aguardando ${delay}ms...`
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, 10000);
-      } else {
-        if (isRateLimit) {
-          throw new Error(
-            "Limite de requisições temporário atingido na API do OpenRouter. Aguarde alguns segundos e tente novamente."
-          );
-        }
-        throw error;
+        delay = Math.min(delay * 2, 8000);
+        continue;
       }
+
+      throw friendlyError(message, true);
     }
   }
-  throw new Error("Tentativas esgotadas ao comunicar com a IA do OpenRouter.");
+
+  throw friendlyError(lastError?.message || "Falha ao comunicar com a IA.", true);
 }

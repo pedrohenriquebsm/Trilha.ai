@@ -91,7 +91,7 @@ export default function Layout({ children }: LayoutProps) {
                 <div className="flex items-center gap-4 ml-4 pl-4 border-l border-base-300">
                   <div className="flex flex-col items-end">
                     <span className="text-xs font-bold">{profile?.name || user.displayName}</span>
-                    <span className="badge badge-primary badge-sm font-bold uppercase tracking-wider">{profile?.credits || 0} Créditos</span>
+                    <span className="badge badge-primary badge-sm font-bold uppercase tracking-wider">{profile?.credits ?? 0} Créditos</span>
                   </div>
                   <div className="dropdown dropdown-end">
                     <div tabIndex={0} role="button" className="btn btn-ghost btn-circle avatar">
@@ -136,7 +136,12 @@ export default function Layout({ children }: LayoutProps) {
               >
                 {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
               </button>
-              <button className="btn btn-ghost btn-circle" onClick={() => setIsMenuOpen(!isMenuOpen)}>
+              <button
+                className="btn btn-ghost btn-circle"
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                aria-label={isMenuOpen ? 'Fechar menu' : 'Abrir menu'}
+                aria-expanded={isMenuOpen}
+              >
                 {isMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
               </button>
             </div>
@@ -176,7 +181,7 @@ export default function Layout({ children }: LayoutProps) {
                       </div>
                       <div>
                         <p className="text-sm font-bold">{profile?.name || user.displayName}</p>
-                        <p className="text-xs text-primary font-bold">{profile?.credits || 0} Créditos</p>
+                        <p className="text-xs text-primary font-bold">{profile?.credits ?? 0} Créditos</p>
                       </div>
                     </div>
                     <button onClick={handleLogout} className="btn btn-error btn-sm btn-circle">

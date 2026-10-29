@@ -1,11 +1,23 @@
 import { callLLM, AGENT_2_CURRICULUM_ARCHITECT, withRetry } from "@/src/lib/llm";
-import { apiError, apiSuccess } from "@/src/lib/apiResponse";
+import { apiSuccess } from "@/src/lib/apiResponse";
+import { guardApiRequest, handleApiError } from "@/src/lib/apiGuard";
+import { readString, ValidationError } from "@/src/lib/validation";
 
 export async function POST(req: Request) {
   try {
-    const { topic, enhancedPrompt } = await req.json();
+    const { body } = await guardApiRequest(req, {
+      requireCredits: true,
+      rateLimitPerMinute: 20,
+    });
+
+    const topic = readString(body.topic, "topic", { max: 200, required: false });
+    const enhancedPrompt = readString(body.enhancedPrompt, "enhancedPrompt", {
+      max: 2000,
+      required: false,
+    });
+
     if (!topic && !enhancedPrompt) {
-      return apiError("O parâmetro 'topic' ou 'enhancedPrompt' é obrigatório.", 400);
+      throw new ValidationError("O parâmetro 'topic' ou 'enhancedPrompt' é obrigatório.");
     }
 
     const mainTopic = topic || enhancedPrompt;
@@ -32,8 +44,7 @@ export async function POST(req: Request) {
     });
 
     return apiSuccess({ topicListText });
-  } catch (error: any) {
-    console.error("Error in /api/gemini/list-topics:", error);
-    return apiError(error?.message || "Erro ao gerar grade de tópicos.", 500);
+  } catch (error) {
+    return handleApiError(error, "/api/gemini/list-topics");
   }
 }

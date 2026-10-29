@@ -2,8 +2,9 @@
 
 import React from 'react';
 import RoadmapCard from '@/src/components/RoadmapCard';
-import { Search, Trash2, AlertCircle, Sparkles, Filter } from 'lucide-react';
+import { Search, Trash2, AlertCircle, Sparkles } from 'lucide-react';
 import { usePublicRoadmaps } from '@/src/hooks/usePublicRoadmaps';
+import { useMyRoadmaps } from '@/src/hooks/useMyRoadmaps';
 import { useAuth } from '@/src/hooks/useAuth';
 import { deleteRoadmap } from '@/src/lib/roadmapService';
 import { Roadmap } from '@/src/types';
@@ -12,8 +13,15 @@ import { motion, AnimatePresence } from 'motion/react';
 export default function DiscoverPage() {
   const [search, setSearch] = React.useState('');
   const [filterType, setFilterType] = React.useState<'all' | 'mine'>('all');
-  const { roadmaps, loading } = usePublicRoadmaps();
+  const { roadmaps: publicRoadmaps, loading: publicLoading, error: publicError } =
+    usePublicRoadmaps();
   const { user } = useAuth();
+  const { roadmaps: myRoadmaps, loading: myLoading, error: myError } =
+    useMyRoadmaps(user?.uid);
+
+  React.useEffect(() => {
+    if (!user) setFilterType('all');
+  }, [user]);
 
   // Delete modal state
   const [roadmapToDelete, setRoadmapToDelete] = React.useState<Roadmap | null>(null);
@@ -22,12 +30,8 @@ export default function DiscoverPage() {
   const [successToast, setSuccessToast] = React.useState<string | null>(null);
 
   const filtered = React.useMemo(() => {
-    let result = roadmaps;
-
-    // Filter by tab (all vs mine)
-    if (filterType === 'mine' && user) {
-      result = result.filter((r) => r.authorId === user.uid);
-    }
+    // "Minhas Trilhas" includes private roadmaps; "Todas" stays public-only.
+    let result = filterType === 'mine' && user ? myRoadmaps : publicRoadmaps;
 
     // Filter by search query
     const term = search.trim().toLowerCase();
@@ -36,9 +40,12 @@ export default function DiscoverPage() {
     return result.filter(
       (r) =>
         r.title.toLowerCase().includes(term) ||
-        r.originalTopic.toLowerCase().includes(term)
+        (r.originalTopic || '').toLowerCase().includes(term)
     );
-  }, [roadmaps, search, filterType, user]);
+  }, [publicRoadmaps, myRoadmaps, search, filterType, user]);
+
+  const loading = filterType === 'mine' ? myLoading : publicLoading;
+  const loadError = filterType === 'mine' ? myError : publicError;
 
   const handleDeleteConfirm = async () => {
     if (!roadmapToDelete || !user) return;
@@ -95,7 +102,7 @@ export default function DiscoverPage() {
                 filterType === 'mine' ? 'btn-primary' : 'btn-ghost border-base-300'
               }`}
             >
-              Minhas Trilhas ({roadmaps.filter((r) => r.authorId === user.uid).length})
+              Minhas Trilhas ({myRoadmaps.length})
             </button>
           </div>
         )}
@@ -104,6 +111,13 @@ export default function DiscoverPage() {
       {successToast && (
         <div className="alert alert-success max-w-xl mx-auto shadow-lg text-sm font-semibold">
           <span>{successToast}</span>
+        </div>
+      )}
+
+      {loadError && (
+        <div className="alert alert-error max-w-xl mx-auto shadow-sm text-sm">
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span>{loadError.message}</span>
         </div>
       )}
 

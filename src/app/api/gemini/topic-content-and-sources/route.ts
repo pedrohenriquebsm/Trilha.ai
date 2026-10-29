@@ -1,23 +1,28 @@
 import { curateTopicService } from "@/src/services/contentService";
-import { apiError, apiSuccess } from "@/src/lib/apiResponse";
+import { apiSuccess } from "@/src/lib/apiResponse";
+import { guardApiRequest, handleApiError } from "@/src/lib/apiGuard";
+import { readBoolean, readContext, readString } from "@/src/lib/validation";
 
 export async function POST(req: Request) {
   try {
-    const { topicTitle, userDescription, shouldGenerateContent, roadmapContext } = await req.json();
-    if (!topicTitle) {
-      return apiError("O parâmetro 'topicTitle' é obrigatório.", 400);
-    }
+    const { body } = await guardApiRequest(req, { rateLimitPerMinute: 30 });
+
+    const topicTitle = readString(body.topicTitle, "topicTitle", { max: 200 });
+    const userDescription = readString(body.userDescription, "userDescription", {
+      max: 500,
+      required: false,
+    });
+    const roadmapContext = readContext(body.roadmapContext);
 
     const result = await curateTopicService({
       topicTitle,
-      shouldGenerateContent: Boolean(shouldGenerateContent),
-      contextDescription: userDescription,
+      shouldGenerateContent: readBoolean(body.shouldGenerateContent),
+      contextDescription: userDescription || undefined,
       roadmapContext,
     });
 
     return apiSuccess(result);
-  } catch (error: any) {
-    console.error(`Error in /api/gemini/topic-content-and-sources:`, error);
-    return apiError(error?.message || "Erro ao gerar conteúdo e fontes do tópico.", 500);
+  } catch (error) {
+    return handleApiError(error, "/api/gemini/topic-content-and-sources");
   }
 }

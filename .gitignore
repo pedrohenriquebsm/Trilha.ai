@@ -1,7 +1,11 @@
 node_modules/
+.next/
+out/
 build/
 dist/
 coverage/
+.firebase/
+*.tsbuildinfo
 .DS_Store
 *.log
 .env*

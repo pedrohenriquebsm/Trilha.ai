@@ -1,5 +1,6 @@
 import { callLLM, CONTENT_CURATOR_SYSTEM_PROMPT, withRetry } from "@/src/lib/llm";
 import { getOptimizedTopicSources, sanitizeSourceUrl } from "@/src/lib/sourceHelper";
+import { isSafeHttpUrl, isSourceDefinitelyBroken } from "@/src/lib/urlVerifier";
 import { Source } from "@/src/types";
 
 export interface CuratedTopicResult {
@@ -88,10 +89,7 @@ export async function curateTopicService({
 
       const rawText = response.choices?.[0]?.message?.content?.trim() || "";
       if (!rawText) {
-        return {
-          content: "Conteúdo não disponível no momento.",
-          sources: fallbackSources,
-        };
+        throw new Error("A IA não retornou conteúdo para este tópico.");
       }
 
       // Extract sources JSON if present in ```sources-json ... ```
@@ -101,34 +99,63 @@ export async function curateTopicService({
         try {
           const parsed = JSON.parse(sourcesMatch[1].trim());
           if (Array.isArray(parsed) && parsed.length > 0) {
-            parsedAiSources = parsed.map((item: any) => ({
-              type: ["book", "article", "video", "guide"].includes(item.type)
-                ? item.type
-                : "guide",
-              title: item.title ? String(item.title) : `Referência: ${topicTitle}`,
-              url: sanitizeSourceUrl(String(item.url || ""), topicTitle),
-              publisher: item.publisher ? String(item.publisher) : undefined,
-              author: item.author ? String(item.author) : undefined,
-              year: item.year ? String(item.year) : new Date().getFullYear().toString(),
-              description: item.description ? String(item.description) : undefined,
-              searchQuery: item.searchQuery ? String(item.searchQuery) : `pesquisa ${topicTitle} documentação artigo`,
-            }));
+            const seenUrls = new Set<string>();
+            parsedAiSources = parsed
+              .slice(0, 6)
+              .map((item: any) => ({
+                type: ["book", "article", "video", "guide"].includes(item.type)
+                  ? item.type
+                  : "guide",
+                title: item.title ? String(item.title).slice(0, 200) : `Referência: ${topicTitle}`,
+                url: sanitizeSourceUrl(String(item.url || ""), topicTitle),
+                publisher: item.publisher ? String(item.publisher).slice(0, 120) : undefined,
+                author: item.author ? String(item.author).slice(0, 120) : undefined,
+                year: item.year ? String(item.year).slice(0, 4) : new Date().getFullYear().toString(),
+                description: item.description ? String(item.description).slice(0, 500) : undefined,
+                searchQuery: item.searchQuery
+                  ? String(item.searchQuery).slice(0, 200)
+                  : `pesquisa ${topicTitle} documentação artigo`,
+              }))
+              .filter((source: Source) => {
+                if (!isSafeHttpUrl(source.url)) return false;
+                if (seenUrls.has(source.url)) return false;
+                seenUrls.add(source.url);
+                return true;
+              });
           }
         } catch (e) {
           console.warn("Failed to parse sources-json from AI, using verified catalog", e);
         }
       }
 
+      // Discard only sources that definitely do not exist (404/410).
+      const verifiedAiSources = (
+        await Promise.all(
+          parsedAiSources.map(async (source) => ({
+            source,
+            broken: await isSourceDefinitelyBroken(source.url),
+          }))
+        )
+      )
+        .filter(({ broken }) => !broken)
+        .map(({ source }) => source);
+
       // Remove the sources-json block from the markdown explanation so the user only sees clean Markdown
       const cleanMarkdown = rawText
         .replace(/```(?:sources-json|json:sources|sources)[\s\S]*?```/gi, "")
-        .trim();
+        .trim()
+        .slice(0, 20_000);
 
-      // Combine AI sources with fallback catalog to ensure high quality and complete coverage
-      const finalSources = parsedAiSources.length > 0 ? parsedAiSources : fallbackSources;
+      // Combine AI sources with the verified catalog: AI-specific links come
+      // first, then catalog entries fill any gaps (without duplicates).
+      const seenFinalUrls = new Set(verifiedAiSources.map((source) => source.url));
+      const finalSources = [
+        ...verifiedAiSources,
+        ...fallbackSources.filter((source) => !seenFinalUrls.has(source.url)),
+      ].slice(0, 4);
 
       return {
-        content: cleanMarkdown || "Conteúdo não disponível.",
+        content: cleanMarkdown || undefined,
         sources: finalSources,
       };
     });

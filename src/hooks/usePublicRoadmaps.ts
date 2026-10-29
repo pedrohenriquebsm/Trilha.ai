@@ -32,8 +32,9 @@ export function usePublicRoadmaps(): UsePublicRoadmapsResult {
       },
       (err) => {
         setLoading(false);
-        setError(err);
-        handleFirestoreError(err, OperationType.LIST, 'roadmaps');
+        setError(
+          handleFirestoreError(err, OperationType.LIST, 'roadmaps')
+        );
       }
     );
 

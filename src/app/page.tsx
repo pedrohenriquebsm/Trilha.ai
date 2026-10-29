@@ -10,7 +10,7 @@ import { useAuth } from '@/src/hooks/useAuth';
 
 export default function HomePage() {
   const router = useRouter();
-  const { roadmaps, loading } = usePublicRoadmaps();
+  const { roadmaps, loading, error } = usePublicRoadmaps();
   const { user } = useAuth();
 
   return (
@@ -30,6 +30,12 @@ export default function HomePage() {
             Ver todas <Compass className="w-4 h-4" />
           </button>
         </div>
+
+        {error && (
+          <div className="alert alert-error mb-8 text-sm">
+            <span>{error.message}</span>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex justify-center py-20">

@@ -4,13 +4,11 @@ import React, { Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { 
   collection, 
-  addDoc, 
   serverTimestamp, 
   doc, 
-  updateDoc,
-  writeBatch
+  runTransaction
 } from 'firebase/firestore';
-import { auth, db, googleProvider, signInWithPopup } from '@/src/lib/firebase';
+import { auth, db, googleProvider, signInWithPopup, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { useAuth } from '@/src/hooks/useAuth';
 import { 
   enhancePrompt, 
@@ -26,9 +24,9 @@ import { Sparkles, AlertCircle, LogIn, CheckCircle2 } from 'lucide-react';
 
 function CreateRoadmapContent() {
   const router = useRouter();
-  const { user, profile } = useAuth();
+  const { user, profile, loading, error: authError } = useAuth();
   const searchParams = useSearchParams();
-  const initialQuery = searchParams.get('q') || '';
+  const initialQuery = (searchParams.get('q') || '').slice(0, 200);
   
   const [topic, setTopic] = React.useState(initialQuery);
   const [mode, setMode] = React.useState<'ai-driven' | 'research'>('ai-driven');
@@ -43,6 +41,12 @@ function CreateRoadmapContent() {
   const [error, setError] = React.useState<string | null>(null);
 
   const handleCreate = async () => {
+    const safeTopic = topic.trim();
+    if (!safeTopic) {
+      setError('Digite um tema para criar a trilha.');
+      return;
+    }
+
     if (!user || !profile) {
       setError('Você precisa estar logado para criar uma trilha.');
       return;
@@ -61,110 +65,117 @@ function CreateRoadmapContent() {
       // Agente 1: Otimizador de Prompt (Refinamento de Escopo)
       // ---------------------------------------------------------
       setStep(1);
-      console.log('Agente 1: Otimizando escopo para:', topic);
-      let enhanced = topic;
+      let enhanced = safeTopic;
       try {
         const timeoutPromise = new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 6000)
+          setTimeout(() => reject(new Error('Timeout')), 30000)
         );
-        enhanced = await Promise.race([enhancePrompt(topic), timeoutPromise]);
+        enhanced = await Promise.race([enhancePrompt(safeTopic), timeoutPromise]);
       } catch (e) {
-        console.warn('Agente 1 fallback to raw topic:', e);
-        enhanced = topic;
+        console.warn('Agente 1 indisponível; usando o tema original:', e);
+        enhanced = safeTopic;
       }
-      console.log('Agente 1 resultado:', enhanced);
-      
+
+      // The enhancer must not replace the user's subject with a generic dev
+      // career. Also keep it under the API's enhancedPrompt limit.
+      const lowerEnhanced = enhanced.toLowerCase();
+      if (
+        (lowerEnhanced.includes('full stack') ||
+          lowerEnhanced.includes('desenvolvedor web')) &&
+        !safeTopic.toLowerCase().includes('full stack') &&
+        !safeTopic.toLowerCase().includes('web')
+      ) {
+        enhanced = safeTopic;
+      }
+      enhanced = enhanced.trim().slice(0, 2000) || safeTopic;
+
       // ---------------------------------------------------------
       // Agente 2: Arquiteto Curricular (Lista Tópicos e Descrições)
       // ---------------------------------------------------------
       setStep(2);
-      console.log('Agente 2: Decompondo grade curricular em 5 níveis...');
-      const topicListText = await listTopics(topic, enhanced);
-      console.log('Agente 2 concluiu listagem curricular.');
+      const topicListText = await listTopics(safeTopic, enhanced);
 
       // ---------------------------------------------------------
       // Agente 3: Curador de Referências e Fontes Técnicas
       // ---------------------------------------------------------
       setStep(3);
-      console.log('Agente 3: Mapeando fontes e referências canônicas...');
-      let referencesText = "";
+      let referencesText = '';
       try {
-        referencesText = await curateReferences(topic, topicListText);
+        referencesText = await curateReferences(safeTopic, topicListText);
       } catch (refErr) {
-        console.warn('Agente 3 referências fallback:', refErr);
-        referencesText = "Documentações técnicas oficiais e literatura canônica recomendada.";
+        console.warn('Agente 3 indisponível; seguindo com referências genéricas:', refErr);
+        referencesText = 'Documentações técnicas oficiais e literatura canônica recomendada.';
       }
-      console.log('Agente 3 concluiu referências.');
 
       // ---------------------------------------------------------
       // Agente 4: Serializador TOON JSON (Compilação Estruturada)
       // ---------------------------------------------------------
       setStep(4);
-      console.log('Agente 4: Estruturando e serializando TOON JSON...');
-      const topicTree = await structureRoadmap(topic, topicListText, referencesText);
-      console.log('Agente 4 concluiu roadmap serializado:', topicTree);
-      
+      const topicTree = await structureRoadmap(
+        safeTopic,
+        topicListText.slice(0, 20000),
+        referencesText.slice(0, 8000)
+      );
+
       if (!topicTree || !topicTree.levels) {
-        throw new Error('A IA não conseguiu estruturar os tópicos corretamente. Tente um assunto mais específico.');
+        throw new Error(
+          'A IA não conseguiu estruturar os tópicos corretamente. Tente um assunto mais específico.'
+        );
       }
 
-      // Enforce topic fidelity on the title
-      let finalTitle = topicTree.roadmapTitle || topic;
-      const lowerTopic = topic.toLowerCase();
+      // Enforce fidelity to the user's topic on the title
+      let finalTitle = topicTree.roadmapTitle || safeTopic;
+      const lowerTopic = safeTopic.toLowerCase();
       const lowerTitle = finalTitle.toLowerCase();
       if (
-        (lowerTitle.includes("full stack") || lowerTitle.includes("desenvolvedor web")) &&
-        !lowerTopic.includes("full stack") &&
-        !lowerTopic.includes("web")
+        (lowerTitle.includes('full stack') || lowerTitle.includes('desenvolvedor web')) &&
+        !lowerTopic.includes('full stack') &&
+        !lowerTopic.includes('web')
       ) {
-        finalTitle = topic;
+        finalTitle = safeTopic;
       }
+      finalTitle = finalTitle.trim().slice(0, 200) || safeTopic;
 
       // ---------------------------------------------------------
-      // Finalização: Criação no Firestore e Curadoria Inicial
+      // Finalização: Criação atômica no Firestore
       // ---------------------------------------------------------
       setStep(5);
-      console.log('Salvando documento de trilha no Firestore...');
-      const roadmapRef = await addDoc(collection(db, 'roadmaps'), {
-        title: finalTitle,
-        originalTopic: topic,
-        enhancedPrompt: enhanced,
-        mode,
-        visibility,
-        authorId: user.uid,
-        authorName: profile.name,
-        likes: 0,
-        createdAt: serverTimestamp(),
-      });
-
-      const topicsCollection = collection(db, `roadmaps/${roadmapRef.id}/topics`);
-      
       const levelMap: Record<string, number> = {
-        'PREREQUISITES': 0,
-        'BEGINNER': 1,
-        'INTERMEDIATE': 2,
-        'ADVANCED': 3,
-        'NEXT_STEPS': 4
+        PREREQUISITES: 0,
+        BEGINNER: 1,
+        INTERMEDIATE: 2,
+        ADVANCED: 3,
+        NEXT_STEPS: 4,
       };
 
-      const allTopics: any[] = [];
+      const allTopics: {
+        title: string;
+        description: string;
+        searchTerms: string[];
+        level: number;
+        order: number;
+      }[] = [];
+
       Object.entries(topicTree.levels).forEach(([levelKey, levelTopics]) => {
         const normalizedKey = levelKey.toUpperCase();
         if (Array.isArray(levelTopics)) {
           levelTopics.forEach((t: any) => {
-            allTopics.push({ 
-              title: t.title,
-              description: t.description || "",
+            const title = typeof t?.title === 'string' ? t.title.trim() : '';
+            if (!title) return;
+
+            allTopics.push({
+              title,
+              description: t.description || '',
               searchTerms: Array.isArray(t.searchTerms) ? t.searchTerms : [],
               level: levelMap[normalizedKey] ?? 1,
-              order: t.order || 0
+              order: typeof t.order === 'number' ? t.order : allTopics.length + 1,
             });
           });
         }
       });
 
       if (allTopics.length === 0) {
-        throw new Error('Nenhum tópico foi gerado para esta trilha.');
+        throw new Error('Nenhum tópico foi gerado para esta trilha. Tente novamente.');
       }
 
       // Curate first topic for instant onboarding
@@ -172,11 +183,10 @@ function CreateRoadmapContent() {
       let firstTopicSources: Source[] = [];
       const roadmapContext = {
         title: finalTitle,
-        originalTopic: topic
+        originalTopic: safeTopic,
       };
 
       try {
-        console.log(`Pré-curando primeiro tópico: ${allTopics[0].title}...`);
         const curated = await curateContent(allTopics[0].title, mode, roadmapContext);
         firstTopicContent = curated.content || null;
         firstTopicSources = curated.sources || [];
@@ -184,39 +194,100 @@ function CreateRoadmapContent() {
         console.warn('Pré-curadoria do tópico inicial diferida para sob demanda:', curateErr);
       }
 
-      // Save all topics to Firestore using batch write
-      const batch = writeBatch(db);
-      allTopics.forEach((t, idx) => {
-        const topicDocRef = doc(topicsCollection);
-        const isFirst = idx === 0 && firstTopicContent !== null;
-        batch.set(topicDocRef, {
-          roadmapId: roadmapRef.id,
-          title: t.title,
-          description: t.description || "",
-          searchTerms: t.searchTerms || [],
-          level: t.level,
-          order: t.order || 0,
-          content: isFirst ? firstTopicContent : null,
-          sources: isFirst && firstTopicSources.length > 0 
-            ? firstTopicSources 
-            : getOptimizedTopicSources(t.title, t.description, roadmapContext),
-        });
-      });
-      await batch.commit();
-
-      // Deduct credit
+      const roadmapRef = doc(collection(db, 'roadmaps'));
+      const topicsCollection = collection(db, `roadmaps/${roadmapRef.id}/topics`);
+      const topicRefs = allTopics.map(() => doc(topicsCollection));
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
-        credits: Math.max(0, profile.credits - 1)
+
+      // Roadmap + topics + credit deduction in a single transaction:
+      // no orphan roadmaps, no free roadmaps and no double-spend when the user
+      // has two tabs open.
+      await runTransaction(db, async (transaction) => {
+        const userSnapshot = await transaction.get(userRef);
+
+        if (!userSnapshot.exists()) {
+          throw new Error('Seu perfil não foi encontrado. Saia e entre novamente.');
+        }
+
+        const currentCredits = Number(userSnapshot.data().credits ?? 0);
+        if (!Number.isFinite(currentCredits) || currentCredits <= 0) {
+          throw new Error('Você não tem créditos suficientes para criar outra trilha.');
+        }
+
+        transaction.set(roadmapRef, {
+          title: finalTitle,
+          originalTopic: safeTopic,
+          enhancedPrompt: enhanced,
+          mode,
+          visibility,
+          authorId: user.uid,
+          authorName: profile.name,
+          likes: 0,
+          createdAt: serverTimestamp(),
+        });
+
+        allTopics.forEach((t, idx) => {
+          const isFirst = idx === 0 && firstTopicContent !== null;
+          transaction.set(topicRefs[idx], {
+            roadmapId: roadmapRef.id,
+            title: t.title,
+            description: t.description,
+            searchTerms: t.searchTerms,
+            level: t.level,
+            order: t.order,
+            content: isFirst ? firstTopicContent : null,
+            sources:
+              isFirst && firstTopicSources.length > 0
+                ? firstTopicSources
+                : getOptimizedTopicSources(t.title, t.description, roadmapContext),
+            createdAt: serverTimestamp(),
+          });
+        });
+
+        transaction.update(userRef, { credits: currentCredits - 1 });
       });
 
       router.push(`/roadmap/${roadmapRef.id}`);
     } catch (err: any) {
       console.error('Generation Error:', err);
-      setError(err.message || 'Ocorreu um erro ao gerar sua trilha. Por favor, tente novamente.');
+      const isFirestoreError =
+        typeof err?.code === 'string' &&
+        /permission|unavailable|offline|deadline|aborted|not-found|failed-precondition/i.test(
+          err.code
+        );
+      setError(
+        isFirestoreError
+          ? handleFirestoreError(err, OperationType.WRITE, 'roadmaps').message
+          : err?.message || 'Ocorreu um erro ao gerar sua trilha. Por favor, tente novamente.'
+      );
       setIsCreating(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-40">
+        <span className="loading loading-spinner loading-lg text-primary" aria-label="Carregando perfil" />
+      </div>
+    );
+  }
+
+  if (user && !profile) {
+    return (
+      <div className="max-w-2xl mx-auto py-20 text-center space-y-6">
+        <div className="w-20 h-20 bg-error/10 rounded-3xl flex items-center justify-center text-error mx-auto">
+          <AlertCircle className="w-10 h-10" />
+        </div>
+        <h2 className="text-2xl font-extrabold font-display">Não foi possível carregar seu perfil</h2>
+        <p className="text-base-content/60 max-w-md mx-auto">
+          {authError || 'Verifique sua conexão e tente novamente.'}
+        </p>
+        <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          Recarregar página
+        </button>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -313,6 +384,7 @@ function CreateRoadmapContent() {
               placeholder="ex: Banco de dados, React 19, Kubernetes, Rust..." 
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
+              maxLength={200}
               className="input input-bordered input-lg w-full font-medium focus:input-primary"
             />
           </div>
@@ -322,33 +394,37 @@ function CreateRoadmapContent() {
               <span className="label-text text-xs font-bold uppercase tracking-wider">Modo de Aprendizado</span>
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div 
+              <button 
+                type="button"
                 onClick={() => setMode('ai-driven')}
+                aria-pressed={mode === 'ai-driven'}
                 className={cn(
-                  "p-5 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between space-y-3",
+                  "p-5 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between space-y-3 text-left",
                   mode === 'ai-driven' ? "border-primary bg-primary/5 shadow-md shadow-primary/5" : "border-base-300 hover:border-base-content/20"
                 )}
               >
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start w-full">
                   <span className="font-bold">IA-Driven</span>
                   {mode === 'ai-driven' && <div className="badge badge-primary badge-sm font-bold">Ativo</div>}
                 </div>
                 <p className="text-xs text-base-content/60">Conteúdo autoral gerado com alta densidade, desafios práticos e quiz interativo.</p>
-              </div>
+              </button>
 
-              <div 
+              <button 
+                type="button"
                 onClick={() => setMode('research')}
+                aria-pressed={mode === 'research'}
                 className={cn(
-                  "p-5 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between space-y-3",
+                  "p-5 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between space-y-3 text-left",
                   mode === 'research' ? "border-primary bg-primary/5 shadow-md shadow-primary/5" : "border-base-300 hover:border-base-content/20"
                 )}
               >
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start w-full">
                   <span className="font-bold">Research Mode</span>
                   {mode === 'research' && <div className="badge badge-primary badge-sm font-bold">Ativo</div>}
                 </div>
                 <p className="text-xs text-base-content/60">Foco em curadoria de links oficiais, livros de referência e documentações consagradas.</p>
-              </div>
+              </button>
             </div>
           </div>
 
@@ -383,7 +459,7 @@ function CreateRoadmapContent() {
 
         <button 
           onClick={handleCreate}
-          disabled={!topic || isCreating}
+          disabled={!topic.trim() || isCreating}
           className="btn btn-primary btn-lg w-full font-bold text-lg shadow-xl shadow-primary/20"
         >
           Gerar Minha Trilha (1 Crédito)

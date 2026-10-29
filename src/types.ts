@@ -49,7 +49,7 @@ export interface Challenge {
     description: string;
     requirements: string[];
     solution?: string;
-  };
+  } | null;
 }
 
 export interface Topic {
@@ -60,9 +60,10 @@ export interface Topic {
   order: number;
   description?: string;
   searchTerms?: string[];
-  content?: string;
+  content?: string | null;
   sources?: Source[];
   challenge?: Challenge;
+  createdAt?: any; // Firestore Timestamp
 }
 
 export interface UserProgress {

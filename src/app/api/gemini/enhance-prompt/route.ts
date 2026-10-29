@@ -1,12 +1,16 @@
 import { callLLM, PROMPT_ENHANCER_SYSTEM_PROMPT, withRetry } from "@/src/lib/llm";
-import { apiError, apiSuccess } from "@/src/lib/apiResponse";
+import { apiSuccess } from "@/src/lib/apiResponse";
+import { guardApiRequest, handleApiError } from "@/src/lib/apiGuard";
+import { readString } from "@/src/lib/validation";
 
 export async function POST(req: Request) {
   try {
-    const { input } = await req.json();
-    if (!input) {
-      return apiError("O parâmetro 'input' é obrigatório.", 400);
-    }
+    const { body } = await guardApiRequest(req, {
+      requireCredits: true,
+      rateLimitPerMinute: 20,
+    });
+
+    const input = readString(body.input, "input", { max: 200 });
 
     const enhanced = await withRetry(async (model) => {
       const response = await callLLM(
@@ -27,8 +31,7 @@ export async function POST(req: Request) {
     });
 
     return apiSuccess({ enhanced });
-  } catch (error: any) {
-    console.error("Error in /api/gemini/enhance-prompt:", error);
-    return apiError(error?.message || "Erro ao aprimorar o prompt com IA.", 500);
+  } catch (error) {
+    return handleApiError(error, "/api/gemini/enhance-prompt");
   }
 }

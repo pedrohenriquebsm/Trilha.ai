@@ -1,4 +1,5 @@
 import { RoadmapMode, Source, Challenge } from "../types";
+import { auth } from "../lib/firebase";
 
 export interface TopicTree {
   roadmapTitle: string;
@@ -11,25 +12,56 @@ export interface TopicTree {
   };
 }
 
+const CLIENT_TIMEOUT_MS = 200_000;
+
 async function apiPost<T>(endpoint: string, body: any): Promise<T> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error("Entre na sua conta para usar os recursos de IA.");
+  }
+
+  let token: string;
+  try {
+    token = await user.getIdToken();
+  } catch {
+    throw new Error("Sua sessão expirou. Entre novamente para continuar.");
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CLIENT_TIMEOUT_MS);
+
   let res: Response;
   try {
     res = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("A geração demorou demais para responder. Tente novamente.");
+    }
     throw new Error("Falha na conexão com o servidor. Verifique sua rede e tente novamente.");
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const rawText = await res.text();
-  const contentType = res.headers.get("content-type") || "";
 
   if (!res.ok) {
-    let errorMsg = `Erro no processamento (${res.status}). Tente novamente em instantes.`;
+    let errorMsg =
+      res.status === 401
+        ? "Sua sessão expirou. Entre novamente para continuar."
+        : res.status === 402
+        ? "Você não tem créditos suficientes para esta ação."
+        : res.status === 429
+        ? "Muitas requisições em pouco tempo. Aguarde alguns segundos."
+        : `Erro no processamento (${res.status}). Tente novamente em instantes.`;
+
     if (rawText) {
       try {
         const data = JSON.parse(rawText);
@@ -100,24 +132,18 @@ export async function structureRoadmap(
   return data.topicTree;
 }
 
-// Backward compatibility alias for single-call invocation
-export async function decomposeTopic(enhancedPrompt: string, originalTopic?: string): Promise<TopicTree> {
-  const data = await apiPost<{ topicTree: TopicTree }>("/api/gemini/decompose-topic", {
-    enhancedPrompt,
-    originalTopic: originalTopic || enhancedPrompt,
-  });
-  return data.topicTree;
-}
-
 export async function curateContent(
-  topicTitle: string, 
+  topicTitle: string,
   mode: RoadmapMode,
-  roadmapContext?: { title: string; originalTopic: string }
+  roadmapContext?: { title: string; originalTopic: string },
+  options?: { forceContent?: boolean; userDescription?: string }
 ): Promise<{ content?: string; sources: Source[] }> {
   return await apiPost<{ content?: string; sources: Source[] }>("/api/gemini/curate-content", {
     topicTitle,
     mode,
     roadmapContext,
+    forceContent: options?.forceContent ?? false,
+    userDescription: options?.userDescription,
   });
 }
 

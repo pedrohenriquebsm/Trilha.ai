@@ -1,59 +1,33 @@
 import { callLLM, AGENT_4_ROADMAP_SERIALIZER, withRetry } from "@/src/lib/llm";
 import { parseCompactRoadmap } from "@/src/lib/toonParser";
-import { apiError, apiSuccess } from "@/src/lib/apiResponse";
+import { apiSuccess } from "@/src/lib/apiResponse";
+import { guardApiRequest, handleApiError } from "@/src/lib/apiGuard";
+import { readString } from "@/src/lib/validation";
+import { parseLooseJson } from "@/src/lib/llmJson";
 
-function parseJsonFromLlmResponse(content: string, fallbackTitle: string): any {
-  let cleaned = content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, "$1").trim();
-
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-  }
-
-  const sanitized = cleaned
-    .replace(/\[\s*\.{2,}\s*\]/g, "[]")
-    .replace(/,\s*\.{2,}/g, "")
-    .replace(/\.{2,}\s*,/g, "")
-    .replace(/,\s*([\]}])/g, "$1");
-
-  try {
-    return JSON.parse(sanitized);
-  } catch {
-    try {
-      return JSON.parse(cleaned);
-    } catch {}
-
-    const heavySanitized = sanitized
-      .replace(/\.{3,}/g, "")
-      .replace(/,\s*,/g, ",")
-      .replace(/\[\s*,/g, "[")
-      .replace(/,\s*([\]}])/g, "$1");
-
-    try {
-      return JSON.parse(heavySanitized);
-    } catch {
-      console.warn("Could not parse JSON from serializer agent, using fallback for:", fallbackTitle);
-      return {
-        rt: fallbackTitle,
-        lv: {
-          PREREQUISITES: [],
-          BEGINNER: [],
-          INTERMEDIATE: [],
-          ADVANCED: [],
-          NEXT_STEPS: [],
-        },
-      };
-    }
-  }
+function countTopics(levels: Record<string, unknown[]>): number {
+  return Object.values(levels).reduce(
+    (total, topics) => total + (Array.isArray(topics) ? topics.length : 0),
+    0
+  );
 }
 
 export async function POST(req: Request) {
   try {
-    const { topic, topicListText, referencesText } = await req.json();
-    if (!topic) {
-      return apiError("O parâmetro 'topic' é obrigatório.", 400);
-    }
+    const { body } = await guardApiRequest(req, {
+      requireCredits: true,
+      rateLimitPerMinute: 20,
+    });
+
+    const topic = readString(body.topic, "topic", { max: 200 });
+    const topicListText = readString(body.topicListText, "topicListText", {
+      max: 20_000,
+      required: false,
+    });
+    const referencesText = readString(body.referencesText, "referencesText", {
+      max: 8_000,
+      required: false,
+    });
 
     const result = await withRetry(async (model) => {
       const response = await callLLM(
@@ -73,12 +47,12 @@ export async function POST(req: Request) {
         throw new Error("O Agente Serializador retornou conteúdo vazio.");
       }
 
-      const rawParsed = parseJsonFromLlmResponse(content, topic);
+      const rawParsed = parseLooseJson<any>(content);
 
       // Guard against topic drift
       if (rawParsed) {
         const lowerTopic = topic.toLowerCase();
-        const lowerRt = (rawParsed.rt || "").toLowerCase();
+        const lowerRt = String(rawParsed.rt || "").toLowerCase();
         const isGenericDevHallucination =
           (lowerRt.includes("full stack") || lowerRt.includes("desenvolvedor web")) &&
           !lowerTopic.includes("full stack") &&
@@ -89,12 +63,18 @@ export async function POST(req: Request) {
         }
       }
 
-      return parseCompactRoadmap(rawParsed);
+      const parsed = parseCompactRoadmap(rawParsed);
+      const totalTopics = countTopics(parsed.levels as unknown as Record<string, unknown[]>);
+
+      if (totalTopics === 0) {
+        throw new Error("A IA não retornou nenhum tópico válido para esta trilha.");
+      }
+
+      return parsed;
     });
 
     return apiSuccess({ topicTree: result });
-  } catch (error: any) {
-    console.error("Error in /api/gemini/structure-roadmap:", error);
-    return apiError(error?.message || "Erro ao serializar e estruturar o roadmap.", 500);
+  } catch (error) {
+    return handleApiError(error, "/api/gemini/structure-roadmap");
   }
 }
