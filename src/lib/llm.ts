@@ -16,20 +16,19 @@ export const client = new OpenAI({
 });
 
 /**
- * Valid free models on OpenRouter (checked against /api/v1/models).
- * `openrouter/free` is a router alias that picks an available free model,
- * so it is the safest default. The extra model is used as a fallback when
- * the router itself is rate limited.
+ * `openrouter/free` é o roteador de modelos gratuitos do OpenRouter e era o
+ * modelo usado anteriormente. Ele escolhe um provedor disponível, evitando
+ * fixar um modelo `:free` específico que pode responder 429.
  *
- * Keep this list small and valid: an invalid model id makes the fallback
- * fail with a non-retryable 404 exactly when it is needed.
+ * O fallback também usa o roteador: se `OPENROUTER_MODEL` apontar para um
+ * modelo específico temporariamente limitado, a próxima tentativa volta para
+ * um modelo gratuito disponível.
  */
 export const MODELS = Array.from(
   new Set(
     [
       process.env.OPENROUTER_MODEL || "openrouter/free",
       "openrouter/free",
-      "google/gemma-4-26b-a4b-it:free",
     ].filter(Boolean)
   )
 );

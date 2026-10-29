@@ -68,7 +68,7 @@ OPENROUTER_MODEL="openrouter/free"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ```
 
-`OPENROUTER_MODEL` deve ser um ID válido em <https://openrouter.ai/models>. O fallback interno usa `openrouter/free` e `google/gemma-4-26b-a4b-it:free`.
+`OPENROUTER_MODEL` deve ser um ID válido em <https://openrouter.ai/models>. O padrão e o fallback interno usam `openrouter/free`, o roteador que escolhe um modelo gratuito disponível. Evite fixar um modelo `:free` específico: modelos gratuitos podem retornar `429` quando estão temporariamente limitados.
 
 ## Como a geração funciona
 
