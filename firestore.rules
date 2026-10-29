@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - name: string (required)
+    //   - email: string (required, email format)
+    //   - role: string (required, 'user' or 'admin')
+    //   - plan: string (required, 'free' or 'pro')
+    //   - credits: number (required, >= 0)
+    //
+    // Collection: roadmaps
+    // Document ID: {roadmapId}
+    // Fields:
+    //   - title: string (required)
+    //   - originalTopic: string (required)
+    //   - enhancedPrompt: string (optional)
+    //   - mode: string (required, 'ai-driven' or 'research')
+    //   - visibility: string (required, 'public' or 'private')
+    //   - authorId: string (required)
+    //   - authorName: string (optional)
+    //   - likes: number (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: roadmaps/{roadmapId}/topics
+    // Document ID: {topicId}
+    // Fields:
+    //   - roadmapId: string (required)
+    //   - title: string (required)
+    //   - level: number (required, 0-4)
+    //   - order: number (required)
+    //   - content: string (optional)
+    //   - sources: list (optional)
+    //
+    // Collection: userProgress
+    // Document ID: {progressId}
+    // Fields:
+    //   - userId: string (required)
+    //   - topicId: string (required)
+    //   - roadmapId: string (required)
+    //   - status: string (required, 'not-started', 'in-progress', 'completed')
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "20221002800645@pucgo.edu.br" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'email', 'role', 'plan', 'credits']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string && data.role in ['user', 'admin'] &&
+             data.plan in ['free', 'pro'] && data.credits is number && data.credits >= 0;
+    }
+
+    function isValidRoadmap(data) {
+      return data.keys().hasAll(['title', 'originalTopic', 'mode', 'visibility', 'authorId', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.mode in ['ai-driven', 'research'] &&
+             data.visibility in ['public', 'private'] &&
+             data.authorId is string && data.createdAt is timestamp;
+    }
+
+    function isValidTopic(data) {
+      return data.keys().hasAll(['roadmapId', 'title', 'level', 'order']) &&
+             data.roadmapId is string && data.title is string &&
+             data.level is number && data.level >= 0 && data.level <= 4 &&
+             data.order is number;
+    }
+
+    function isValidProgress(data) {
+      return data.keys().hasAll(['userId', 'topicId', 'roadmapId', 'status']) &&
+             data.userId is string && data.topicId is string &&
+             data.roadmapId is string && data.status in ['not-started', 'in-progress', 'completed'];
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
+      allow update: if (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role) || isAdmin();
+    }
+
+    match /roadmaps/{roadmapId} {
+      allow read: if resource.data.visibility == 'public' || isOwner(resource.data.authorId);
+      allow create: if isAuthenticated() && isValidRoadmap(request.resource.data) && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAuthenticated() && isValidRoadmap(request.resource.data) && (isOwner(resource.data.authorId) || isAdmin());
+      allow delete: if isAuthenticated() && (isOwner(resource.data.authorId) || isAdmin());
+
+      match /topics/{topicId} {
+        allow read: if get(/databases/$(database)/documents/roadmaps/$(roadmapId)).data.visibility == 'public' || 
+                       isOwner(get(/databases/$(database)/documents/roadmaps/$(roadmapId)).data.authorId);
+        allow write: if isAuthenticated() && (isOwner(get(/databases/$(database)/documents/roadmaps/$(roadmapId)).data.authorId) || isAdmin());
+      }
+    }
+
+    match /userProgress/{progressId} {
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && isValidProgress(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && isValidProgress(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    match /test/{testId} {
+      allow read: if true;
+    }
+  }
+}

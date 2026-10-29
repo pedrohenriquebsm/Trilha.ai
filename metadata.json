@@ -1,0 +1,6 @@
+{
+  "name": "Trilha.ai",
+  "description": "Plataforma de geração automatizada de roadmaps de estudo utilizando Inteligência Artificial para tecnologia e desenvolvimento de software.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

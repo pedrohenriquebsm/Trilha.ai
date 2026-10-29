@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "Usuário",
+      "description": "Perfil do usuário com créditos e plano.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Nome do usuário" },
+        "email": { "type": "string", "format": "email", "description": "E-mail do usuário" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "Papel do usuário" },
+        "plan": { "type": "string", "enum": ["free", "pro"], "description": "Plano de assinatura" },
+        "credits": { "type": "integer", "description": "Saldo de créditos" }
+      },
+      "required": ["name", "email", "role", "plan", "credits"]
+    },
+    "Roadmap": {
+      "title": "Roadmap",
+      "description": "Trilha de aprendizagem estruturada.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Título do roadmap" },
+        "originalTopic": { "type": "string", "description": "Assunto original pesquisado" },
+        "enhancedPrompt": { "type": "string", "description": "Prompt melhorado pela IA" },
+        "mode": { "type": "string", "enum": ["ai-driven", "research"], "description": "Modo de operação" },
+        "visibility": { "type": "string", "enum": ["public", "private"], "description": "Visibilidade" },
+        "authorId": { "type": "string", "description": "ID do autor" },
+        "authorName": { "type": "string", "description": "Nome do autor" },
+        "likes": { "type": "integer", "description": "Número de curtidas" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Data de criação" }
+      },
+      "required": ["title", "originalTopic", "mode", "visibility", "authorId", "createdAt"]
+    },
+    "Topic": {
+      "title": "Tópico",
+      "description": "Item individual do roadmap.",
+      "type": "object",
+      "properties": {
+        "roadmapId": { "type": "string", "description": "ID do roadmap pai" },
+        "title": { "type": "string", "description": "Título do tópico" },
+        "level": { "type": "integer", "description": "Nível hierárquico (0-4)" },
+        "order": { "type": "integer", "description": "Ordem de exibição" },
+        "content": { "type": "string", "description": "Conteúdo explicativo (Markdown)" },
+        "sources": { "type": "array", "items": { "type": "object" }, "description": "Lista de fontes curadas" }
+      },
+      "required": ["roadmapId", "title", "level", "order"]
+    },
+    "UserProgress": {
+      "title": "Progresso do Usuário",
+      "description": "Status de conclusão de um tópico por um usuário.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "ID do usuário" },
+        "topicId": { "type": "string", "description": "ID do tópico" },
+        "roadmapId": { "type": "string", "description": "ID do roadmap" },
+        "status": { "type": "string", "enum": ["not-started", "in-progress", "completed"], "description": "Status de progresso" }
+      },
+      "required": ["userId", "topicId", "roadmapId", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "Perfis de usuários" },
+    "/roadmaps/{roadmapId}": { "schema": "Roadmap", "description": "Roadmaps de estudo" },
+    "/roadmaps/{roadmapId}/topics/{topicId}": { "schema": "Topic", "description": "Tópicos de um roadmap" },
+    "/userProgress/{progressId}": { "schema": "UserProgress", "description": "Progresso individual nos tópicos" }
+  }
+}
