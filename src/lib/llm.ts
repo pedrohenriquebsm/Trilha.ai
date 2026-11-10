@@ -33,15 +33,6 @@ export const MODELS = Array.from(
   )
 );
 
-/**
- * Models pinned per role. Pinning is a prerequisite for prompt caching and for
- * reproducible evaluation; when unset, the free router keeps the old behavior.
- */
-export const MODEL_ROLES = {
-  curriculum: process.env.OPENROUTER_MODEL_CURRICULUM || MODELS[0],
-  content: process.env.OPENROUTER_MODEL_CONTENT || MODELS[0],
-};
-
 /** Default per-request timeout. Keeps AI Studio / Cloud Run requests bounded. */
 export const DEFAULT_LLM_TIMEOUT_MS = 60_000;
 
@@ -58,112 +49,62 @@ export type ORChatCompletion = OpenAI.Chat.Completions.ChatCompletion & {
   >;
 };
 
-// Specialized Agent Prompts - Single Responsibility Architecture
-export const AGENT_1_PROMPT_OPTIMIZER = `Você é um Agente Especialista em Engenharia de Prompts e Definição de Escopo Educacional.
-Sua única responsabilidade é receber o tópico do usuário e enriquecê-lo com um escopo técnico preciso, detalhado e delimitado.
-REGRAS RÍGIDAS:
-- FIDELIDADE ABSOLUTA: Nunca desvie do tema principal. Se o usuário digitou "Banco de dados", detalhe estritamente assuntos de Bancos de Dados (Modelagem Relacional, NoSQL, SQL, ACID, Transações, Índices, Otimização e Segurança). NUNCA transforme em outra carreira como "Desenvolvedor Web Full Stack" a menos que expressamente solicitado.
-- Retorne apenas o escopo enriquecido em português, direto e sem saudações ou preâmbulos, em no máximo 60 palavras.`;
+// Specialized Agent Prompts - Sequential Context-Aware Architecture
+export const AGENT_1_PROMPT_OPTIMIZER = `Você é um Agente Especialista em Engenharia de Prompts Educacionais.
+Sua única responsabilidade é receber o tópico do usuário e criar um escopo técnico preciso, detalhado e delimitado que servirá de base para toda a criação da trilha.
+REGRAS:
+- Mantenha estrito foco no tema central do usuário.
+- Defina o nível de profundidade e as competências esperadas.
+- Retorne apenas o escopo em português, direto e sem saudações.`;
 
-export const AGENT_2_CURRICULUM_ARCHITECT = `Você é um Agente Especialista em Pedagogia Técnica e Arquitetura Curricular.
-Sua única responsabilidade é decompor o tema e o escopo fornecido em uma lista completa de tópicos organizada estritamente em 5 níveis de progressão:
-
-1. PREREQUISITES (Pré-requisitos e fundamentos teóricos essenciais)
-2. BEGINNER (Iniciante: primeiros passos, sintaxe básica e primeiros exemplos)
-3. INTERMEDIATE (Intermediário: fluxo de dados, padrões de projeto e casos reais)
-4. ADVANCED (Avançado: arquitetura profunda, otimização de performance, escalabilidade e segurança)
-5. NEXT_STEPS (Próximos Passos: ecossistema moderno, ferramentas de produção e tópicos emergentes)
+export const AGENT_2_LEVEL_GENERATOR = `Você é um Arquiteto Curricular. Sua responsabilidade é gerar tópicos para um nível específico da trilha de aprendizado.
+NÍVEIS: (1. Fundamentals, 2. Beginner, 3. Intermediate, 4. Advanced, 5. Next Steps).
+CONTEXTO ANTERIOR: {contexto_anterior}
+TEMA E ESCOPO: {escopo}
+NÍVEL ATUAL PARA GERAR: {nivel_atual}
 
 REGRAS:
-- FIDELIDADE TOTAL: Todos os tópicos devem ser 100% sobre o tema solicitado.
-- Para cada nível, liste de 3 a 6 tópicos essenciais.
-- Para cada tópico, forneça:
-  * Título: Claro e objetivo em português.
-  * Descrição: Resumo denso e direto do que será aprendido (máximo 40 palavras).
-- Não precisa se preocupar com JSON; estruture em texto legível indicando os níveis, títulos e descrições.`;
+- Gere de 3 a 6 tópicos técnicos densos para este nível.
+- Para cada tópico, retorne: "Título: Descrição (20 palavras)".
+- Não gere explicações automáticas, apenas a lista.`;
 
-export const AGENT_3_REFERENCES_CURATOR = `Você é um Agente Especialista em Curadoria Bibliográfica e Fontes Técnicas Oficiais.
-Sua única responsabilidade é analisar os tópicos do currículo e recomendar as melhores referências reais e canônicas para o assunto.
+export const AGENT_3_TOPIC_OVERVIEW = `Você é um Especialista em Conteúdo Técnico.
+Sua responsabilidade é criar uma visão geral densa e direta para cada tópico gerado nos níveis anteriores.
+LISTA DE TÓPICOS: {lista_topicos}
+
 REGRAS:
-- Indique fontes legítimas e consagradas: documentações oficiais (MDN, PostgreSQL docs, RFCs, Python docs), livros clássicos (autores reconhecidos), especificações e guias de referência.
-- Para cada recomendação, informe:
-  * Tipo: [Documentação Oficial | Livro Clássico | Guia Técnico | Curso/Repositório]
-  * Título da Referência
-  * Autor / Organização Mantenedora
-  * Descrição concisa da relevância prática.
-- Foque em qualidade técnica e autoridade no assunto.`;
+- Para cada tópico, escreva um parágrafo objetivo de 3 a 5 frases explicando o que é, por que é importante e o conceito chave.
+- Mantenha foco técnico e utilitário.
+- Não gere introduções ou conclusões, apenas a lista de visões gerais.`;
 
-export const AGENT_4_ROADMAP_SERIALIZER = `Você é um Agente Especialista em Serialização de Dados e Estruturação JSON.
-Sua única responsabilidade é transformar os tópicos curriculares e as referências fornecidas pelos agentes anteriores em um JSON perfeitamente válido e padronizado.
+export const AGENT_4_JSON_FORMATTER = `Você é um Agente Especialista em Estruturação JSON.
+Sua única responsabilidade é transformar os tópicos e visões gerais fornecidas em um JSON estritamente válido e bem formado.
 
-ESTRUTURA EXATA DO JSON:
+FORMATO:
 {
-  "rt": "Título da Trilha em Português",
+  "rt": "Título da Trilha",
   "lv": {
-    "PREREQUISITES": [
-      {"t": "Título do Tópico", "d": "Descrição telegráfica em português", "o": 1, "s": ["palavra-chave"]}
-    ],
-    "BEGINNER": [
-      {"t": "Título do Tópico", "d": "Descrição telegráfica em português", "o": 1, "s": ["palavra-chave"]}
-    ],
-    "INTERMEDIATE": [
-      {"t": "Título do Tópico", "d": "Descrição telegráfica em português", "o": 1, "s": ["palavra-chave"]}
-    ],
-    "ADVANCED": [
-      {"t": "Título do Tópico", "d": "Descrição telegráfica em português", "o": 1, "s": ["palavra-chave"]}
-    ],
-    "NEXT_STEPS": [
-      {"t": "Título do Tópico", "d": "Descrição telegráfica em português", "o": 1, "s": ["palavra-chave"]}
-    ]
+    "PREREQUISITES": [{"t": "Título", "d": "Descrição", "o": 1, "s": ["Termo"]}],
+    "BEGINNER": [{"t": "Título", "d": "Descrição", "o": 1, "s": ["Termo"]}],
+    "INTERMEDIATE": [{"t": "...", "d": "...", "o": 1, "s": ["..."]}],
+    "ADVANCED": [{"t": "...", "d": "...", "o": 1, "s": ["..."]}],
+    "NEXT_STEPS": [{"t": "...", "d": "...", "o": 1, "s": ["..."]}]
   }
 }
 
-REGRAS:
-- Retorne EXCLUSIVAMENTE o JSON válido, sem código markdown, sem texto antes ou depois.
-- NUNCA use reticências (...) ou [...]. Inclua todos os tópicos completos.
-- "rt": Título objetivo e representativo do tema (ex: "Banco de Dados: Do Básico à Arquitetura Avançada").
-- "o": número sequencial por nível (1, 2, 3...).
-- "s": array com 1 a 2 termos em inglês ou palavras-chave de busca.`;
+REGRAS ESTRICTAS:
+1. Retorne APENAS o JSON puro. Não escreva NADA antes ou depois do JSON.
+2. Não utilize blocos de código Markdown (\`\`\`json ... \`\`\`).
+3. Utilize aspas duplas (") para chaves e valores string.
+4. Certifique-se de que não haja vírgulas após o último elemento de arrays ou objetos.
+5. Garanta que todos os tópicos fornecidos estejam presentes.`;
 
 // Aliases for backwards compatibility
 export const PROMPT_ENHANCER_SYSTEM_PROMPT = AGENT_1_PROMPT_OPTIMIZER;
-export const TOPIC_DECOMPOSER_SYSTEM_PROMPT = AGENT_4_ROADMAP_SERIALIZER;
-
-/**
- * Single-call curriculum agent. Replaces the old `list-topics` + `structure-roadmap`
- * pair: the model emits the final compact TOON payload directly, so topics are
- * never paid for twice and there is no second chance to drift from the theme.
- */
-export const AGENT_CURRICULUM = `Você é um arquiteto curricular técnico.
-Decomponha o tema em EXATAMENTE 8 tópicos por nível (40 no total).
-
-Níveis (lv): 0 pré-requisitos, 1 iniciante, 2 intermediário, 3 avançado, 4 próximos passos.
-
-Retorne UM único bloco \`\`\`toon\`\`\` e nada fora dele:
-title: Título da trilha em português
-topics[40]{lv|t|d|s}:
-  0|Modelagem relacional|Tabelas chaves e normalização|sql modelagem
-  0|Álgebra relacional|Operações de conjunto sobre tabelas|sql teoria
-
-REGRAS:
-- Exatamente 40 linhas. Nunca use reticências nem omita linhas.
-- t: 4 a 60 caracteres, específico e único.
-- d: no máximo 12 palavras, telegráfico, sem "aprender", "introdução a" ou "conceitos de".
-- s: 2 termos de busca separados por espaço.
-- Nunca use "|" dentro de um campo.
-- Fique estritamente no tema. Não invente produtos, cursos ou tecnologias.
-- Sem saudações, sem explicações antes ou depois do bloco.`;
-
-export function buildCurriculumUserPrompt(topic: string, scope?: string): string {
-  const cleanTopic = topic.trim().slice(0, 200);
-  const cleanScope = (scope || "").trim().slice(0, 800);
-  const scopeLine =
-    cleanScope && cleanScope.toLowerCase() !== cleanTopic.toLowerCase()
-      ? `\nEscopo: ${cleanScope}`
-      : "";
-
-  return `Tema: "${cleanTopic}"${scopeLine}\n\nGere a grade com 40 tópicos (8 por nível), fiéis ao tema.`;
-}
+export const TOPIC_DECOMPOSER_SYSTEM_PROMPT = AGENT_4_JSON_FORMATTER;
+export const AGENT_2_CURRICULUM_ARCHITECT = AGENT_2_LEVEL_GENERATOR;
+export const AGENT_3_REFERENCES_CURATOR = AGENT_3_TOPIC_OVERVIEW;
+export const AGENT_4_ROADMAP_SERIALIZER = AGENT_4_JSON_FORMATTER;
 
 
 export const CONTENT_CURATOR_SYSTEM_PROMPT = `Tech educator. Explain topic in dense, informative Portuguese Markdown. No greetings, no preamble.
@@ -228,29 +169,14 @@ export function stripThinking(text: string): string {
   return cleaned.trim();
 }
 
-export interface CallLLMOptions {
-  /** Send `reasoning: { enabled: true }`. Defaults to true (legacy behavior). */
-  reasoning?: boolean;
-  temperature?: number;
-  /** OpenRouter `response_format`, e.g. `{ type: "json_object" }`. */
-  responseFormat?: Record<string, unknown>;
-  /** Extra provider preferences, e.g. `{ require_parameters: true }`. */
-  provider?: Record<string, unknown>;
-}
-
 /**
- * Calls OpenRouter using the OpenAI SDK.
- *
- * `reasoning` is opt-in per call: reasoning tokens are billed as output, so
- * structured/curriculum tasks run without it (which also removes the empty
- * `content` responses that used to require a second request).
+ * Calls OpenRouter using the OpenAI SDK with reasoning enabled.
  */
 export async function callLLM(
   messages: any[],
   maxTokens = 2000,
   model = MODELS[0],
-  timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
-  options: CallLLMOptions = {}
+  timeoutMs = DEFAULT_LLM_TIMEOUT_MS
 ): Promise<ORChatCompletion> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -259,54 +185,32 @@ export async function callLLM(
     );
   }
 
-  const reasoningEnabled = options.reasoning !== false;
-
-  const buildRequest = (withReasoning: boolean) => {
-    const request: Record<string, unknown> = {
+  try {
+    // Call with reasoning: { enabled: true } as required by OpenRouter.
+    // maxRetries: 0 keeps retry/fallback logic in withRetry().
+    const apiResponse = (await client.chat.completions.create({
       model,
       messages,
       max_tokens: maxTokens,
+      reasoning: { enabled: true },
       timeout: timeoutMs,
       maxRetries: 0,
-    };
-
-    if (withReasoning) request.reasoning = { enabled: true };
-    if (typeof options.temperature === "number") request.temperature = options.temperature;
-    if (options.responseFormat) request.response_format = options.responseFormat;
-    if (options.provider) request.provider = options.provider;
-
-    return request;
-  };
-
-  try {
-    // maxRetries: 0 keeps retry/fallback logic in withRetry().
-    const apiResponse = (await client.chat.completions.create(
-      buildRequest(reasoningEnabled) as any
-    )) as ORChatCompletion;
+    } as any)) as ORChatCompletion;
 
     const firstMsg = apiResponse.choices?.[0]?.message;
-    if (process.env.LLM_USAGE_LOG === "1") {
-      const usage = apiResponse.usage as
-        | (typeof apiResponse.usage & {
-            prompt_tokens_details?: { cached_tokens?: number };
-          })
-        | undefined;
-      console.info(
-        `[llm] ${model} prompt=${usage?.prompt_tokens ?? "?"} completion=${
-          usage?.completion_tokens ?? "?"
-        } cached=${usage?.prompt_tokens_details?.cached_tokens ?? 0}`
-      );
-    }
-
     if (!firstMsg?.content || firstMsg.content.trim() === "") {
       const reasoningText = (firstMsg as any)?.reasoning || "";
       if (reasoningText && (reasoningText.includes("{") || reasoningText.length > 50)) {
         firstMsg.content = stripThinking(reasoningText);
-      } else if (reasoningEnabled) {
+      } else {
         // Fallback retry without reasoning parameter to get direct content
-        const directResponse = (await client.chat.completions.create(
-          buildRequest(false) as any
-        )) as ORChatCompletion;
+        const directResponse = (await client.chat.completions.create({
+          model,
+          messages,
+          max_tokens: maxTokens,
+          timeout: timeoutMs,
+          maxRetries: 0,
+        } as any)) as ORChatCompletion;
         if (directResponse.choices?.[0]?.message) {
           directResponse.choices[0].message.content = stripThinking(
             directResponse.choices[0].message.content || ""
@@ -323,10 +227,14 @@ export async function callLLM(
     const errorMsg = error?.message || String(error);
 
     // If the selected model does not support the reasoning parameter, retry without it
-    if (reasoningEnabled && errorMsg.toLowerCase().includes("reasoning")) {
-      const fallbackResponse = (await client.chat.completions.create(
-        buildRequest(false) as any
-      )) as ORChatCompletion;
+    if (errorMsg.toLowerCase().includes("reasoning")) {
+      const fallbackResponse = (await client.chat.completions.create({
+        model,
+        messages,
+        max_tokens: maxTokens,
+        timeout: timeoutMs,
+        maxRetries: 0,
+      } as any)) as ORChatCompletion;
       return fallbackResponse;
     }
 
@@ -429,15 +337,13 @@ function friendlyError(message: string, isLastAttempt: boolean): Error {
 export async function withRetry<T>(
   fn: (model: string) => Promise<T>,
   retries = 2,
-  initialDelay = 1500,
-  models: string[] = MODELS
+  initialDelay = 1500
 ): Promise<T> {
-  const rotation = models.length > 0 ? models : MODELS;
   let delay = initialDelay;
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const model = rotation[attempt % rotation.length];
+    const model = MODELS[attempt % MODELS.length];
     try {
       return await fn(model);
     } catch (error: any) {

@@ -14,7 +14,7 @@ export interface TopicTree {
 
 const CLIENT_TIMEOUT_MS = 200_000;
 
-async function apiPost<T>(endpoint: string, body: any): Promise<T> {
+async function apiPost<T>(endpoint: string, body: any, retries = 3): Promise<T> {
   const user = auth.currentUser;
   if (!user) {
     throw new Error("Entre na sua conta para usar os recursos de IA.");
@@ -77,6 +77,18 @@ async function apiPost<T>(endpoint: string, body: any): Promise<T> {
     throw new Error(errorMsg);
   }
 
+  // Robustness fix: detect auth redirects or warmup pages masquerading as 200 OK
+  const contentType = res.headers.get("content-type") || "";
+  if (res.redirected || contentType.includes("text/html") || rawText.trim().startsWith("<")) {
+    if (retries > 0) {
+      console.warn(`Transient environment issue detected (content-type: ${contentType}), retrying in 2s... (${retries} retries left)`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return apiPost(endpoint, body, retries - 1);
+    }
+    console.error(`Persistent environment issue detected (content-type: ${contentType}). Raw response prefix: ${rawText.substring(0, 100)}`);
+    throw new Error("Sua sessão expirou ou o ambiente está reconectando. Recarregue a página.");
+  }
+
   if (!rawText || rawText.trim() === "") {
     throw new Error("O servidor retornou uma resposta vazia. Tente novamente.");
   }
@@ -100,16 +112,7 @@ export async function enhancePrompt(input: string): Promise<string> {
   }
 }
 
-// Agent 2 (v2): Currículo completo em uma única chamada (TOON tabular)
-export async function generateCurriculum(topic: string, scope: string): Promise<TopicTree> {
-  const data = await apiPost<{ topicTree: TopicTree }>("/api/gemini/curriculum", {
-    topic,
-    scope,
-  });
-  return data.topicTree;
-}
-
-// Agent 2 (legado): Arquiteto Curricular (Gera lista de tópicos e descrições nos 5 níveis)
+// Agent 2: Arquiteto Curricular (Gera lista de tópicos e descrições nos 5 níveis)
 export async function listTopics(topic: string, enhancedPrompt: string): Promise<string> {
   const data = await apiPost<{ topicListText: string }>("/api/gemini/list-topics", {
     topic,
@@ -173,3 +176,8 @@ export async function generateTopicContentAndSources(
     shouldGenerateContent,
   });
 }
+
+export async function generateRoadmapSequence(topic: string): Promise<any> {
+  return await apiPost<{ roadmap: any }>("/api/gemini/generate-roadmap-sequence", { topic });
+}
+

@@ -9,20 +9,12 @@ import type { Challenge } from "@/src/types";
 
 function parseChallengeJson(content: string): any {
   const candidate = extractJsonCandidate(content);
-
-  // Code snippets often contain unescaped quotes in the final "s" (solution)
-  // field. Repair that specific pattern before giving up.
-  const repaired = candidate.replace(
-    /"s"\s*:\s*"(.*?)"\s*}\s*}\s*$/s,
-    (_match, code: string) => `"s":${JSON.stringify(code)}}`
-  );
-
+  
   try {
-    return parseLooseJson(repaired);
-  } catch {
-    // Do not fabricate a quiz when the model returns malformed JSON. Throwing
-    // lets withRetry try another model; if all attempts fail, the user gets an
-    // honest error instead of fake questions.
+    return parseLooseJson(candidate);
+  } catch (e) {
+    console.error("Failed to parse challenge JSON. Raw content:", content.substring(0, 500));
+    console.error("Candidate:", candidate.substring(0, 500));
     throw new ApiError(502, "Não foi possível decodificar o desafio retornado pela IA.");
   }
 }
@@ -43,14 +35,14 @@ export async function POST(req: Request) {
           {
             role: "system",
             content:
-              "Tech instructor. Caveman style: ultra-dense, precise, zero fluff. Output ONLY TOON JSON. Rules: Valid JSON only. In code snippets, use single quotes (') instead of double quotes (\").",
+              "Tech instructor. Caveman style: ultra-dense, precise, zero fluff. Output ONLY valid JSON. Rules: Valid JSON only, no markdown fences (```). In code snippets, use single quotes (') instead of double quotes (\").",
           },
           {
             role: "user",
             content: `Topic: "${topicTitle}". Context: "${topicContent.substring(0, 300)}"
-Create 2 multiple-choice questions (4 options) and 1 practical challenge.
-Format TOON JSON:
-{"qs":[{"q":"question","o":["opt1","opt2","opt3","opt4"],"a":0,"e":"short explanation"}],"ac":{"t":"title","d":"short desc","r":["req1","req2"],"s":"concise solution"}}`,
+Create 3 multiple-choice questions (4 options each) and 1 practical challenge.
+JSON FORMAT:
+{"qs":[{"q":"question","o":["opt1","opt2","opt3","opt4"],"a":0,"e":"explanation"}],"ac":{"t":"title","d":"desc","r":["req1"],"s":"solution"}}`,
           },
         ],
         1500,

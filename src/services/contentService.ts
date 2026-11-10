@@ -1,12 +1,7 @@
 import { callLLM, CONTENT_CURATOR_SYSTEM_PROMPT, withRetry } from "@/src/lib/llm";
+import { parseLooseJson } from "@/src/lib/llmJson";
 import { getOptimizedTopicSources, sanitizeSourceUrl } from "@/src/lib/sourceHelper";
 import { isSafeHttpUrl, isSourceDefinitelyBroken } from "@/src/lib/urlVerifier";
-import {
-  dedupeSourcesByUrl,
-  filterCitableSources,
-  normalizeSourceUrl,
-  strictSourcesEnabled,
-} from "@/src/lib/sourcePolicy";
 import { Source } from "@/src/types";
 
 export interface CuratedTopicResult {
@@ -103,7 +98,7 @@ export async function curateTopicService({
       const sourcesMatch = rawText.match(/```(?:sources-json|json:sources|sources)\s*([\s\S]*?)\s*```/i);
       if (sourcesMatch) {
         try {
-          const parsed = JSON.parse(sourcesMatch[1].trim());
+          const parsed = parseLooseJson<any[]>(sourcesMatch[1].trim());
           if (Array.isArray(parsed) && parsed.length > 0) {
             const seenUrls = new Set<string>();
             parsedAiSources = parsed
@@ -134,38 +129,17 @@ export async function curateTopicService({
         }
       }
 
-      // Normalize URLs and drop duplicates before verifying. Only https URLs
-      // can survive; `sanitizeSourceUrl` may return a search URL as fallback.
-      const normalizedAiSources = dedupeSourcesByUrl(
-        parsedAiSources
-          .map((source) => ({ ...source, url: normalizeSourceUrl(source.url) || source.url }))
-          .filter((source) => source.url.startsWith("https://"))
-      );
-
-      // cite-or-drop: keep only sources on the trusted allowlist that actually
-      // respond. When disabled (STRICT_SOURCES=0), fall back to the legacy rule
-      // that only discards 404/410. The curated catalog fills any gap below, so
-      // a dropped source is never replaced by an invented one.
-      let verifiedAiSources: Source[];
-      if (strictSourcesEnabled()) {
-        verifiedAiSources = await filterCitableSources(normalizedAiSources);
-        if (normalizedAiSources.length > 0) {
-          console.info(
-            `[sources] cite-or-drop: ${verifiedAiSources.length}/${normalizedAiSources.length} mantidas para "${topicTitle}"`
-          );
-        }
-      } else {
-        verifiedAiSources = (
-          await Promise.all(
-            normalizedAiSources.map(async (source) => ({
-              source,
-              broken: await isSourceDefinitelyBroken(source.url),
-            }))
-          )
+      // Discard only sources that definitely do not exist (404/410).
+      const verifiedAiSources = (
+        await Promise.all(
+          parsedAiSources.map(async (source) => ({
+            source,
+            broken: await isSourceDefinitelyBroken(source.url),
+          }))
         )
-          .filter(({ broken }) => !broken)
-          .map(({ source }) => source);
-      }
+      )
+        .filter(({ broken }) => !broken)
+        .map(({ source }) => source);
 
       // Remove the sources-json block from the markdown explanation so the user only sees clean Markdown
       const cleanMarkdown = rawText
@@ -175,14 +149,10 @@ export async function curateTopicService({
 
       // Combine AI sources with the verified catalog: AI-specific links come
       // first, then catalog entries fill any gaps (without duplicates).
-      const seenFinalUrls = new Set(
-        verifiedAiSources.map((source) => normalizeSourceUrl(source.url) || source.url)
-      );
+      const seenFinalUrls = new Set(verifiedAiSources.map((source) => source.url));
       const finalSources = [
         ...verifiedAiSources,
-        ...fallbackSources.filter(
-          (source) => !seenFinalUrls.has(normalizeSourceUrl(source.url) || source.url)
-        ),
+        ...fallbackSources.filter((source) => !seenFinalUrls.has(source.url)),
       ].slice(0, 4);
 
       return {

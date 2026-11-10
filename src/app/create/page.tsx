@@ -12,22 +12,16 @@ import { auth, db, googleProvider, signInWithPopup, handleFirestoreError, Operat
 import { useAuth } from '@/src/hooks/useAuth';
 import { 
   enhancePrompt, 
-  generateCurriculum,
   listTopics, 
   curateReferences, 
   structureRoadmap, 
-  curateContent 
+  curateContent,
+  generateRoadmapSequence 
 } from '@/src/services/geminiService';
 import { Source } from '@/src/types';
 import { getOptimizedTopicSources } from '@/src/lib/sourceHelper';
 import { cn } from '@/src/lib/utils';
 import { Sparkles, AlertCircle, LogIn, CheckCircle2 } from 'lucide-react';
-
-/**
- * Single-call curriculum (40 topics) instead of three sequential agents.
- * `NEXT_PUBLIC_CURRICULUM_V2="0"` restores the legacy pipeline.
- */
-const CURRICULUM_V2 = process.env.NEXT_PUBLIC_CURRICULUM_V2 !== '0';
 
 function CreateRoadmapContent() {
   const router = useRouter();
@@ -68,79 +62,18 @@ function CreateRoadmapContent() {
     setError(null);
     
     try {
-      // ---------------------------------------------------------
-      // Agente 1: Otimizador de Prompt (Refinamento de Escopo)
-      // Só vale a pena para temas curtos/ambíguos: um tema já descritivo não
-      // precisa de uma chamada de IA (economiza um request inteiro).
-      // ---------------------------------------------------------
       setStep(1);
-      let enhanced = safeTopic;
-      const topicWords = safeTopic.split(/\s+/).filter(Boolean).length;
+      
+      const { roadmap: topicTree } = await generateRoadmapSequence(safeTopic);
 
-      if (topicWords < 3) {
-        try {
-          const timeoutPromise = new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), 30000)
-          );
-          enhanced = await Promise.race([enhancePrompt(safeTopic), timeoutPromise]);
-        } catch (e) {
-          console.warn('Agente 1 indisponível; usando o tema original:', e);
-          enhanced = safeTopic;
-        }
-
-        // The enhancer must not replace the user's subject with a generic dev
-        // career. Also keep it under the API's enhancedPrompt limit.
-        const lowerEnhanced = enhanced.toLowerCase();
-        if (
-          (lowerEnhanced.includes('full stack') ||
-            lowerEnhanced.includes('desenvolvedor web')) &&
-          !safeTopic.toLowerCase().includes('full stack') &&
-          !safeTopic.toLowerCase().includes('web')
-        ) {
-          enhanced = safeTopic;
-        }
-        enhanced = enhanced.trim().slice(0, 2000) || safeTopic;
-      }
-
-      // ---------------------------------------------------------
-      // Agente 2: Currículo completo
-      // v2: uma chamada (40 tópicos em TOON tabular).
-      // legado: list-topics → curate-references → structure-roadmap.
-      // ---------------------------------------------------------
-      let topicTree: Awaited<ReturnType<typeof generateCurriculum>>;
-
-      if (CURRICULUM_V2) {
-        setStep(2);
-        topicTree = await generateCurriculum(safeTopic, enhanced);
-      } else {
-        setStep(2);
-        const topicListText = await listTopics(safeTopic, enhanced);
-
-        setStep(3);
-        let referencesText = '';
-        try {
-          referencesText = await curateReferences(safeTopic, topicListText);
-        } catch (refErr) {
-          console.warn('Agente 3 indisponível; seguindo com referências genéricas:', refErr);
-          referencesText = 'Documentações técnicas oficiais e literatura canônica recomendada.';
-        }
-
-        setStep(4);
-        topicTree = await structureRoadmap(
-          safeTopic,
-          topicListText.slice(0, 20000),
-          referencesText.slice(0, 8000)
-        );
-      }
-
-      if (!topicTree || !topicTree.levels) {
+      if (!topicTree || !topicTree.lv) {
         throw new Error(
           'A IA não conseguiu estruturar os tópicos corretamente. Tente um assunto mais específico.'
         );
       }
 
       // Enforce fidelity to the user's topic on the title
-      let finalTitle = topicTree.roadmapTitle || safeTopic;
+      let finalTitle = topicTree.rt || safeTopic;
       const lowerTopic = safeTopic.toLowerCase();
       const lowerTitle = finalTitle.toLowerCase();
       if (
@@ -172,19 +105,19 @@ function CreateRoadmapContent() {
         order: number;
       }[] = [];
 
-      Object.entries(topicTree.levels).forEach(([levelKey, levelTopics]) => {
+      Object.entries(topicTree.lv).forEach(([levelKey, levelTopics]) => {
         const normalizedKey = levelKey.toUpperCase();
         if (Array.isArray(levelTopics)) {
           levelTopics.forEach((t: any) => {
-            const title = typeof t?.title === 'string' ? t.title.trim() : '';
+            const title = typeof t?.t === 'string' ? t.t.trim() : '';
             if (!title) return;
 
             allTopics.push({
               title,
-              description: t.description || '',
-              searchTerms: Array.isArray(t.searchTerms) ? t.searchTerms : [],
+              description: t.d || '',
+              searchTerms: Array.isArray(t.s) ? t.s : [],
               level: levelMap[normalizedKey] ?? 1,
-              order: typeof t.order === 'number' ? t.order : allTopics.length + 1,
+              order: typeof t.o === 'number' ? t.o : allTopics.length + 1,
             });
           });
         }
@@ -194,8 +127,7 @@ function CreateRoadmapContent() {
         throw new Error('Nenhum tópico foi gerado para esta trilha. Tente novamente.');
       }
 
-      // Curadoria do primeiro tópico: no v2 é lazy (gerada ao abrir o tópico),
-      // o que evita uma chamada de ~2.500 tokens que o usuário pode nunca ler.
+      // Curate first topic for instant onboarding
       let firstTopicContent: string | null = null;
       let firstTopicSources: Source[] = [];
       const roadmapContext = {
@@ -203,14 +135,12 @@ function CreateRoadmapContent() {
         originalTopic: safeTopic,
       };
 
-      if (!CURRICULUM_V2) {
-        try {
-          const curated = await curateContent(allTopics[0].title, mode, roadmapContext);
-          firstTopicContent = curated.content || null;
-          firstTopicSources = curated.sources || [];
-        } catch (curateErr) {
-          console.warn('Pré-curadoria do tópico inicial diferida para sob demanda:', curateErr);
-        }
+      try {
+        const curated = await curateContent(allTopics[0].title, mode, roadmapContext);
+        firstTopicContent = curated.content || null;
+        firstTopicSources = curated.sources || [];
+      } catch (curateErr) {
+        console.warn('Pré-curadoria do tópico inicial diferida para sob demanda:', curateErr);
       }
 
       const roadmapRef = doc(collection(db, 'roadmaps'));
@@ -218,9 +148,6 @@ function CreateRoadmapContent() {
       const topicRefs = allTopics.map(() => doc(topicsCollection));
       const userRef = doc(db, 'users', user.uid);
 
-      // Roadmap + topics + credit deduction in a single transaction:
-      // no orphan roadmaps, no free roadmaps and no double-spend when the user
-      // has two tabs open.
       await runTransaction(db, async (transaction) => {
         const userSnapshot = await transaction.get(userRef);
 
@@ -236,7 +163,7 @@ function CreateRoadmapContent() {
         transaction.set(roadmapRef, {
           title: finalTitle,
           originalTopic: safeTopic,
-          enhancedPrompt: enhanced,
+          enhancedPrompt: finalTitle, // Simplified
           mode,
           visibility,
           authorId: user.uid,
@@ -343,34 +270,36 @@ function CreateRoadmapContent() {
         <div className="space-y-4">
           <h2 className="text-3xl font-extrabold tracking-tight font-display">Construindo sua Trilha</h2>
           <p className="text-base-content/60 max-w-md mx-auto text-sm">
-            {CURRICULUM_V2
-              ? 'Um agente de IA está montando sua grade curricular em uma única passada.'
-              : 'Quatro agentes de IA especializados estão colaborando em sequência para arquitetar sua jornada de estudos.'}
+            Quatro agentes de IA especializados estão colaborando em sequência para arquitetar sua jornada de estudos.
           </p>
         </div>
 
         <div className="space-y-4 max-w-md mx-auto text-left bg-base-200/50 p-6 rounded-2xl border border-base-300">
-          {(CURRICULUM_V2
-            ? [
-                { id: 1, label: 'Agente 1: Otimizando Prompt e Escopo Técnico' },
-                { id: 2, label: 'Agente 2: Gerando Grade Curricular (40 tópicos)' },
-                { id: 5, label: 'Finalizando: Gravando Trilha' },
-              ]
-            : [
-                { id: 1, label: 'Agente 1: Otimizando Prompt e Escopo Técnico' },
-                { id: 2, label: 'Agente 2: Estruturando Grade Curricular de Tópicos' },
-                { id: 3, label: 'Agente 3: Mapeando Fontes e Referências Canônicas' },
-                { id: 4, label: 'Agente 4: Serializando Dados em JSON' },
-                { id: 5, label: 'Finalizando: Gravando Trilha e Curadoria Inicial' },
-              ]
-          ).map((loadingStep) => (
-            <LoadingStep
-              key={loadingStep.id}
-              completed={step > loadingStep.id}
-              active={step === loadingStep.id}
-              label={loadingStep.label}
-            />
-          ))}
+          <LoadingStep 
+            completed={step > 1} 
+            active={step === 1} 
+            label="Agente 1: Otimizando Prompt e Escopo Técnico" 
+          />
+          <LoadingStep 
+            completed={step > 2} 
+            active={step === 2} 
+            label="Agente 2: Estruturando Grade Curricular de Tópicos" 
+          />
+          <LoadingStep 
+            completed={step > 3} 
+            active={step === 3} 
+            label="Agente 3: Mapeando Fontes e Referências Canônicas" 
+          />
+          <LoadingStep 
+            completed={step > 4} 
+            active={step === 4} 
+            label="Agente 4: Serializando Dados em JSON" 
+          />
+          <LoadingStep 
+            completed={step > 5} 
+            active={step === 5} 
+            label="Finalizando: Gravando Trilha e Curadoria Inicial" 
+          />
         </div>
       </div>
     );
